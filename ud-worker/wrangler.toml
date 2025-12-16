@@ -1,0 +1,22 @@
+name = "ud-relay"
+main = "src/index.ts"
+compatibility_date = "2025-12-16"
+
+# R2 绑定
+[[r2_buckets]]
+binding = "UD_BUCKET"
+bucket_name = "ud-bucket"
+
+# Durable Object 绑定
+[[durable_objects.bindings]]
+name = "UD_STATE"
+class_name = "UDState"
+
+# DO 迁移（第一次部署必须有）
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["UDState"]
+
+# 定时清理（每 10 分钟跑一次）
+[triggers]
+crons = ["*/10 * * * *"]
