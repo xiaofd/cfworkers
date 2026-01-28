@@ -40,8 +40,8 @@ type StateData = {
 };
 
 const DEFAULTS = {
-  MAX_MB: 50,
-  RATE_LIMIT_SEC: 10,
+  MAX_MB: 100,
+  RATE_LIMIT_SEC: 2,
   MAX_PENDING: 10,
   TTL_SEC: 24 * 3600,
 };

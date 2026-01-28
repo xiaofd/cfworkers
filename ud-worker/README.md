@@ -38,8 +38,8 @@ wrangler secret put UD_API_KEY
 wrangler kv:key put UD_BASE_PATH "/relay"
 
 # 可选：上传大小/速率/待下载上限/TTL（单位见下）
-wrangler kv:key put UD_MAX_MB "50"
-wrangler kv:key put UD_RATE_LIMIT_SEC "10"
+wrangler kv:key put UD_MAX_MB "100"
+wrangler kv:key put UD_RATE_LIMIT_SEC "2"
 wrangler kv:key put UD_MAX_PENDING "10"
 wrangler kv:key put UD_TTL_SEC "86400"
 ```
@@ -70,8 +70,8 @@ wrangler publish
 ## 环境变量说明
 - `UD_API_KEY`：可选，设置后上传必须带 key（查询参数 `?key=`、header `X-API-Key`、或表单字段 `key`）。
 - `UD_BASE_PATH`：可选，部署在子路径时设置，例如 `/relay`。
-- `UD_MAX_MB`：可选，最大上传 MB，默认 50。
-- `UD_RATE_LIMIT_SEC`：可选，单 IP 频率（秒），默认 10，设 0 关闭。
+- `UD_MAX_MB`：可选，最大上传 MB，默认 100。
+- `UD_RATE_LIMIT_SEC`：可选，单 IP 频率（秒），默认 2，设 0 关闭。
 - `UD_MAX_PENDING`：可选，待下载上限，默认 10，设 0 关闭（不淘汰）。
 - `UD_TTL_SEC`：可选，链接 TTL（秒），默认 86400，设 0 关闭。
 
@@ -112,3 +112,12 @@ wrangler publish
 - 同名文件上传会覆盖旧文件并删除旧对象。
 - 速率限制基于上传 IP；`lastUpload` 会定期清理旧 IP 记录。
 - DO 清理任务：定时触发 `scheduled` 清理过期/卡住的 token，并淘汰超出上限的待下载对象。
+
+## 默认值速查
+Worker（Cloudflare）：
+- `UD_MAX_MB=100`
+- `UD_RATE_LIMIT_SEC=2`
+
+本地 Python：
+- `UD_MAX_UPLOAD_MB=100`
+- `UD_RATE_LIMIT_SECONDS=2`

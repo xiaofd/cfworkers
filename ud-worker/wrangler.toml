@@ -2,6 +2,10 @@ name = "ud-relay"
 main = "src/index.ts"
 compatibility_date = "2025-12-16"
 
+[vars]
+UD_MAX_MB = "100"
+UD_RATE_LIMIT_SEC = "2"
+
 # R2 绑定
 [[r2_buckets]]
 binding = "UD_BUCKET"

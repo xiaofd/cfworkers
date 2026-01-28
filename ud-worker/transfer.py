@@ -53,7 +53,7 @@ BIND_PORT = int(os.environ.get("UD_BIND_PORT", "8000"))
 UPLOAD_DIR = Path(os.environ.get("UD_UPLOAD_DIR", "./uploads")).resolve()
 
 # 上传大小限制
-MAX_UPLOAD_MB = int(os.environ.get("UD_MAX_UPLOAD_MB", "50"))
+MAX_UPLOAD_MB = int(os.environ.get("UD_MAX_UPLOAD_MB", "100"))
 MAX_CONTENT_LENGTH = MAX_UPLOAD_MB * 1024 * 1024
 
 # 上传鉴权：仅 POST /ud 生效；不设置则无需 key
@@ -61,7 +61,7 @@ API_KEY = os.environ.get("UD_API_KEY", "").strip()
 REQUIRE_UPLOAD_AUTH = bool(API_KEY)
 
 # 单 IP 上传限速：每 N 秒最多 1 次（0=关闭）
-RATE_LIMIT_SECONDS = int(os.environ.get("UD_RATE_LIMIT_SECONDS", "10"))
+RATE_LIMIT_SECONDS = int(os.environ.get("UD_RATE_LIMIT_SECONDS", "2"))
 
 # 待下载的 token/file 最多保留 N 份（0=不限制）
 MAX_PENDING_FILES = int(os.environ.get("UD_MAX_PENDING_FILES", "10"))
@@ -982,8 +982,8 @@ def print_startup_banner():
     print("  UD_UPLOAD_DIR=./uploads")
     print("  UD_BIND_HOST=::")
     print("  UD_BIND_PORT=8000")
-    print("  UD_MAX_UPLOAD_MB=50")
-    print("  UD_RATE_LIMIT_SECONDS=10          # 0 disables")
+    print("  UD_MAX_UPLOAD_MB=100")
+    print("  UD_RATE_LIMIT_SECONDS=2           # 0 disables")
     print("  UD_MAX_PENDING_FILES=10           # 0 disables")
     print("  UD_TOKEN_TTL_SECONDS=86400        # 0 disables")
     print("  UD_CLEANUP_INTERVAL_SECONDS=120")
