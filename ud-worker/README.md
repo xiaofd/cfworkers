@@ -80,6 +80,20 @@ wrangler publish
   # 需要 key
   curl -sS -F "file=@/path/to/file" "https://<your-domain>/ud?key=YOUR_KEY"
   ```
+- 直传文件（保留原文件名；推荐 -T）：  
+  ```bash
+  # 通过 name 指定文件名
+  curl -sS -T "/path/to/file" "https://<your-domain>/ud?name=filename.ext"
+  # 需要 key
+  curl -sS -T "/path/to/file" "https://<your-domain>/ud?name=filename.ext&key=YOUR_KEY"
+  ```
+- 直传文本（保存为 <timestamp>.txt）：  
+  ```bash
+  # 无鉴权
+  curl -sS -d "hello world" "https://<your-domain>/ud"
+  # 需要 key
+  curl -sS -d "hello world" "https://<your-domain>/ud?key=YOUR_KEY"
+  ```
 - 下载：使用返回的链接 `https://<domain>/ud/f/<token>/<filename>`；成功一次后 404。
 - 健康检查：`/hc` 返回 JSON，包含调用次数、待下载数量/体积、R2 对象数/存储量。
 - 帮助：`/hp` 返回中文说明（浏览器为美化页面，命令行为纯文本）。

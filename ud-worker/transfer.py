@@ -5,16 +5,41 @@ import os
 import re
 import json
 import time
+import socket
+import argparse
 import threading
 import unicodedata
 from pathlib import Path
 from datetime import datetime, timezone
 from typing import Optional
-from urllib.parse import quote
+from urllib.parse import quote, unquote
 
 from flask import Flask, request, abort, send_file, Response
 from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.exceptions import RequestEntityTooLarge
+
+# ==============================================================================
+# 小工具（配置前）
+# ==============================================================================
+
+def _normalize_base_path(raw: str) -> str:
+    p = (raw or "").strip()
+    if not p or p == "/":
+        return ""
+    if not p.startswith("/"):
+        p = "/" + p
+    return p.rstrip("/")
+
+def _pick_random_port(host: str) -> int:
+    try:
+        family = socket.AF_INET6 if ":" in host else socket.AF_INET
+        with socket.socket(family, socket.SOCK_STREAM) as s:
+            s.bind((host, 0))
+            return int(s.getsockname()[1])
+    except Exception:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.bind(("0.0.0.0", 0))
+            return int(s.getsockname()[1])
 
 # ==============================================================================
 # 配置区（默认值 + 环境变量覆盖）
@@ -66,6 +91,9 @@ MAX_FILENAME_UTF8_BYTES = int(os.environ.get("UD_MAX_FILENAME_UTF8_BYTES", "200"
 TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]{20,200}$")
 
 TITLE = os.environ.get("UD_TITLE", "UD Relay")
+
+# 子路径部署前缀（与 Worker 行为保持一致）
+BASE_PATH = _normalize_base_path(os.environ.get("UD_BASE_PATH", ""))
 
 # ==============================================================================
 # Flask 初始化
@@ -153,6 +181,43 @@ def sanitize_filename(raw: str) -> str:
     if "/" in raw or "\\" in raw:
         return ""
     return raw
+
+def _parse_content_disposition_filename(cd: str) -> str:
+    if not cd:
+        return ""
+    m = re.search(r"filename\\*\\s*=\\s*UTF-8''([^;]+)", cd, re.I)
+    if m:
+        return unquote(m.group(1))
+    m = re.search(r'filename\\s*=\\s*"([^"]+)"', cd, re.I)
+    if m:
+        return m.group(1)
+    m = re.search(r"filename\\s*=\\s*([^;]+)", cd, re.I)
+    if m:
+        return m.group(1).strip().strip('"')
+    return ""
+
+def extract_raw_filename(path_filename: Optional[str] = None) -> str:
+    name = (request.args.get("name") or request.args.get("filename") or "").strip()
+    if not name:
+        name = (request.headers.get("X-Filename") or request.headers.get("X-File-Name") or "").strip()
+    if not name:
+        name = _parse_content_disposition_filename(request.headers.get("Content-Disposition", ""))
+    if not name and path_filename:
+        name = path_filename
+    return sanitize_filename(name)
+
+def save_request_body(tmp: Path, max_bytes: int) -> int:
+    size = 0
+    with tmp.open("wb") as f:
+        while True:
+            chunk = request.stream.read(1024 * 1024)
+            if not chunk:
+                break
+            size += len(chunk)
+            if max_bytes and size > max_bytes:
+                raise RequestEntityTooLarge()
+            f.write(chunk)
+    return size
 
 def get_key_from_request() -> str:
     return (request.form.get("key") or request.args.get("key") or request.headers.get("X-API-Key") or "").strip()
@@ -300,6 +365,29 @@ def cleanup_daemon():
             pass
         time.sleep(CLEANUP_INTERVAL_SECONDS)
 
+def route_path(path: str) -> str:
+    if not BASE_PATH:
+        return path
+    if path == "/":
+        return BASE_PATH
+    return f"{BASE_PATH}{path}"
+
+def base_url() -> str:
+    base = request.url_root.rstrip("/")
+    return base + BASE_PATH
+
+def evict_same_name(download_name: str):
+    # 同名覆盖：删除旧的 meta + 文件（仅未 claimed 的）
+    for mf in UPLOAD_DIR.glob("*.json"):
+        if mf.name.endswith(".claimed.json"):
+            continue
+        try:
+            meta = json.loads(mf.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if meta.get("download_name") == download_name:
+            cleanup_pair(meta, mf)
+
 # ==============================================================================
 # “像没网站”：404/405 默认空响应
 # ==============================================================================
@@ -319,12 +407,16 @@ def too_large(_e):
 # 页面渲染：/ud 同页显示错误或成功链接
 # ==============================================================================
 def render_ud_page(message: str = "", level: str = "info", download_url: str = ""):
-    base = request.url_root.rstrip("/")
+    base = base_url()
     key_note = "需要 key 才能上传" if REQUIRE_UPLOAD_AUTH else "无需 key"
     if REQUIRE_UPLOAD_AUTH:
-        curl_example = f'curl -sS -F "file=@/path/to/file" "{base}/ud?key=YOUR_KEY"'
+        curl_multipart = f'curl -sS -F "file=@/path/to/file" "{base}/ud?key=YOUR_KEY"'
+        curl_put = f'curl -sS -T "/path/to/file" "{base}/ud?name=yourfile.ext&key=YOUR_KEY"'
+        curl_text = f'curl -sS -d "hello" "{base}/ud?key=YOUR_KEY"   # 保存为 <timestamp>.txt'
     else:
-        curl_example = f'curl -sS -F "file=@/path/to/file" "{base}/ud"'
+        curl_multipart = f'curl -sS -F "file=@/path/to/file" "{base}/ud"'
+        curl_put = f'curl -sS -T "/path/to/file" "{base}/ud?name=yourfile.ext"'
+        curl_text = f'curl -sS -d "hello" "{base}/ud"   # 保存为 <timestamp>.txt'
 
     if not wants_html():
         txt = f"""UD Relay
@@ -405,7 +497,9 @@ a:hover{{text-decoration:underline;}}
 
 <div class="section">
   <div class="section-title">curl 示例</div>
-  <pre class="code">{curl_example}</pre>
+  <pre class="code">{curl_multipart}
+{curl_put}
+{curl_text}</pre>
 </div>
 
 <div class="muted" style="margin-top:14px;">帮助：<a href="{base}/hp">{base}/hp</a></div>
@@ -414,14 +508,18 @@ a:hover{{text-decoration:underline;}}
     return (html, 200, {"Content-Type": "text/html; charset=utf-8"})
 
 # ==============================================================================
-# 路由：/hc /hp /ud + /ud/d/<token>
+# 路由：/hc /hp /ud
 # ==============================================================================
 
 def build_help_text(base: str) -> str:
     if REQUIRE_UPLOAD_AUTH:
-        curl = f'curl -sS -F "file=@/path/to/file" "{base}/ud?key=YOUR_KEY"'
+        curl_multipart = f'curl -sS -F "file=@/path/to/file" "{base}/ud?key=YOUR_KEY"'
+        curl_put = f'curl -sS -T "/path/to/file" "{base}/ud?name=yourfile.ext&key=YOUR_KEY"'
+        curl_text = f'curl -sS -d "hello" "{base}/ud?key=YOUR_KEY"   # 保存为 <timestamp>.txt'
     else:
-        curl = f'curl -sS -F "file=@/path/to/file" "{base}/ud"'
+        curl_multipart = f'curl -sS -F "file=@/path/to/file" "{base}/ud"'
+        curl_put = f'curl -sS -T "/path/to/file" "{base}/ud?name=yourfile.ext"'
+        curl_text = f'curl -sS -d "hello" "{base}/ud"   # 保存为 <timestamp>.txt'
     return f"""UD Relay 说明（Python 版本）
 
 用途
@@ -433,11 +531,14 @@ def build_help_text(base: str) -> str:
 - GET  {base}/hp                帮助文档（本页）
 - GET  {base}/ud                浏览器上传页；命令行访问时返回本说明
 - POST {base}/ud                上传文件（multipart/form-data，字段名 file；可选字段 key）
+- PUT  {base}/ud                直传文件（需提供文件名，见示例）
+- POST {base}/ud                直传文本（非 multipart；保存为 <timestamp>.txt）
 - GET  {base}/ud/f/<token>/<filename>   一次性下载，成功后该 token 失效并删除文件
-- GET  {base}/ud/d/<token>              向后兼容旧版下载路径
 
 上传示例
-  {curl}
+  {curl_multipart}
+  {curl_put}
+  {curl_text}
 
 规则
 - 最大上传：{MAX_UPLOAD_MB}MB
@@ -445,11 +546,13 @@ def build_help_text(base: str) -> str:
 - 待下载上限：{MAX_PENDING_FILES} 份（0 关闭；超出会从最旧的 ready 起淘汰）
 - 链接 TTL：{TOKEN_TTL_SECONDS}s（0 关闭；超时会清理）
 - 上传鉴权：{"需要 key（UD_API_KEY 已配置）" if REQUIRE_UPLOAD_AUTH else "无需 key"}
-- 同名覆盖：不存在（按 token 存储）；超量或过期会清理
+- 直传文件名：PUT 需提供 name / filename、X-Filename 或 /ud/<filename>
+- 同名覆盖：同名文件再次上传会覆盖并删除旧文件
 - 下载一次性：token 在下载成功前会被抢占，成功后删除文件+元数据
 
 环境变量 / 配置
 - UD_API_KEY                  可选；设置后上传需提供 key
+- UD_BASE_PATH                可选；部署在子路径时设置（如 /relay）
 - UD_UPLOAD_DIR               存储目录，默认 ./uploads
 - UD_BIND_HOST / UD_BIND_PORT 监听，默认 :: / 8000
 - UD_MAX_UPLOAD_MB            默认 50
@@ -557,11 +660,80 @@ a:hover{{text-decoration:underline;}}
 </div></div></body></html>"""
     return (html, 200, {"Content-Type": "text/html; charset=utf-8"})
 
-@app.route("/hc", methods=["GET"])
+def handle_raw_upload(download_name: str, content_type: str):
+    base = base_url()
+
+    if REQUIRE_UPLOAD_AUTH and not check_upload_auth():
+        return render_ud_page("Key 错误或缺失，上传未执行。", level="err")
+
+    if not rate_limit_upload():
+        return render_ud_page(f"上传过于频繁：每 {RATE_LIMIT_SECONDS}s 仅允许 1 次。", level="err")
+
+    if not download_name:
+        return render_ud_page("缺少文件名：请使用 ?name= 或 /ud/<filename>。", level="err") if wants_html() else ("Missing filename (use ?name= or /ud/<filename>)\n", 400)
+
+    content_length = request.content_length
+    if content_length is None or content_length < 0:
+        return render_ud_page("请求缺少 Content-Length，无法确定文件大小。", level="err") if wants_html() else ("Length Required\n", 411)
+    if content_length > MAX_CONTENT_LENGTH:
+        return (f"File too large (max {MAX_UPLOAD_MB}MB)\n", 413)
+
+    # 同名覆盖：删除旧的 token/file
+    evict_same_name(download_name)
+
+    import secrets
+    token = secrets.token_urlsafe(24)
+    suffix = Path(download_name).suffix
+    stored_name = token + (suffix if suffix else "")
+
+    file_path = (UPLOAD_DIR / stored_name).resolve()
+    tmp = (UPLOAD_DIR / (stored_name + ".tmp")).resolve()
+    if UPLOAD_DIR not in file_path.parents or UPLOAD_DIR not in tmp.parents:
+        return render_ud_page("内部路径错误。", level="err") if wants_html() else ("Invalid path\n", 400)
+
+    try:
+        size = save_request_body(tmp, MAX_CONTENT_LENGTH)
+        os.replace(tmp, file_path)
+    except RequestEntityTooLarge:
+        try:
+            tmp.unlink(missing_ok=True)
+        except Exception:
+            pass
+        return (f"File too large (max {MAX_UPLOAD_MB}MB)\n", 413)
+    except Exception:
+        try:
+            tmp.unlink(missing_ok=True)
+        except Exception:
+            pass
+        return render_ud_page("上传失败：写入文件异常。", level="err") if wants_html() else ("Upload failed\n", 500)
+
+    exp = int(time.time()) + TOKEN_TTL_SECONDS if TOKEN_TTL_SECONDS else 0
+    meta = {
+        "token": token,
+        "stored_name": stored_name,
+        "download_name": download_name,
+        "created_at": now_utc_iso(),
+        "expires_at": exp,
+        "uploader_ip": client_ip(),
+        "content_type": (content_type or "application/octet-stream")[:200],
+        "size": size,
+    }
+    write_json_atomic(token_meta_path(token), meta)
+
+    # 清理（过期 + 超量 + 残留）
+    cleanup_tokens()
+
+    dl = f"{base}/ud/f/{token}/{quote(download_name)}"
+    if wants_html():
+        return render_ud_page("上传成功！", level="ok", download_url=dl)
+
+    return (f"OK\n{dl}\n", 201, {"Content-Type": "text/plain; charset=utf-8"})
+
+@app.route(route_path("/hc"), methods=["GET"])
 def hc():
     global _hc_count
     _hc_count += 1
-    base = request.url_root.rstrip("/")
+    base = base_url()
 
     pending = pending_stats()
     # 统计数据文件（排除 meta/claimed/tmp）
@@ -591,18 +763,22 @@ def hc():
     }
     return render_hc_page(base, body)
 
-@app.route("/hp", methods=["GET"])
+@app.route(route_path("/hp"), methods=["GET"])
 def hp():
-    base = request.url_root.rstrip("/")
+    base = base_url()
     return render_help_page(base)
 
-@app.route("/ud", methods=["GET"])
+@app.route(route_path("/ud"), methods=["GET"])
 def ud_get():
     return render_ud_page()
 
-@app.route("/ud", methods=["POST"])
+@app.route(route_path("/ud"), methods=["POST"])
 def ud_post():
-    base = request.url_root.rstrip("/")
+    base = base_url()
+    if (request.mimetype or "").lower() != "multipart/form-data":
+        download_name = f"{int(time.time())}.txt"
+        return handle_raw_upload(download_name, "text/plain; charset=utf-8")
+
     # 网页端：key 错/限速/文件错误 都在本页提示，不跳转
     if REQUIRE_UPLOAD_AUTH and not check_upload_auth():
         return render_ud_page("Key 错误或缺失，上传未执行。", level="err")
@@ -620,6 +796,9 @@ def ud_post():
     original_name = sanitize_filename(f.filename)
     if not original_name:
         return render_ud_page("文件名不合法（支持中文，但禁止路径/控制字符）。", level="err") if wants_html() else ("Invalid filename\n", 400)
+
+    # 同名覆盖：删除旧的 token/file
+    evict_same_name(original_name)
 
     # 生成一次性 token；存储文件用 token（只保留扩展名）
     import secrets
@@ -643,6 +822,11 @@ def ud_post():
         return render_ud_page("上传失败：写入文件异常。", level="err") if wants_html() else ("Upload failed\n", 500)
 
     exp = int(time.time()) + TOKEN_TTL_SECONDS if TOKEN_TTL_SECONDS else 0
+    content_type = (f.content_type or "application/octet-stream")[:200]
+    try:
+        size = file_path.stat().st_size
+    except Exception:
+        size = 0
     meta = {
         "token": token,
         "stored_name": stored_name,
@@ -650,6 +834,8 @@ def ud_post():
         "created_at": now_utc_iso(),
         "expires_at": exp,
         "uploader_ip": client_ip(),
+        "content_type": content_type,
+        "size": size,
     }
     write_json_atomic(token_meta_path(token), meta)
 
@@ -661,6 +847,13 @@ def ud_post():
         return render_ud_page("上传成功！", level="ok", download_url=dl)
 
     return (f"OK\n{dl}\n", 201, {"Content-Type": "text/plain; charset=utf-8"})
+
+@app.route(route_path("/ud"), methods=["PUT"])
+@app.route(route_path("/ud/<path:filename>"), methods=["PUT"])
+def ud_put(filename: Optional[str] = None):
+    raw_name = extract_raw_filename(filename)
+    content_type = request.content_type or "application/octet-stream"
+    return handle_raw_upload(raw_name, content_type)
 
 def _handle_download(token: str, provided_name: Optional[str] = None):
     # 一次性下载：成功一次后删除 meta + 文件；之后统一 404 空 body
@@ -693,6 +886,7 @@ def _handle_download(token: str, provided_name: Optional[str] = None):
 
     stored_name = meta.get("stored_name")
     download_name = meta.get("download_name") or "download.bin"
+    content_type = meta.get("content_type") or "application/octet-stream"
     if not stored_name:
         cleanup_pair(meta, meta_file)
         abort(404)
@@ -729,7 +923,7 @@ def _handle_download(token: str, provided_name: Optional[str] = None):
         claimed_data_path,
         as_attachment=True,
         download_name=download_name,
-        mimetype="application/octet-stream",
+        mimetype=content_type,
         conditional=False,
         etag=False,
         max_age=0,
@@ -750,11 +944,7 @@ def _handle_download(token: str, provided_name: Optional[str] = None):
     resp.call_on_close(_cleanup)
     return resp
 
-@app.route("/ud/d/<token>", methods=["GET"])
-def ud_download_legacy(token: str):
-    return _handle_download(token, None)
-
-@app.route("/ud/f/<token>/<path:filename>", methods=["GET"])
+@app.route(route_path("/ud/f/<token>/<path:filename>"), methods=["GET"])
 def ud_download(token: str, filename: str):
     # filename 仅用于匹配正确的下载名，防止错误 token 关联
     return _handle_download(token, filename)
@@ -771,18 +961,20 @@ def print_startup_banner():
     print(f"Rate limit: {RATE_LIMIT_SECONDS}s per IP" if RATE_LIMIT_SECONDS else "Rate limit: OFF")
     print(f"Pending cap: {MAX_PENDING_FILES if MAX_PENDING_FILES else 'OFF'}")
     print(f"TTL: {TOKEN_TTL_SECONDS if TOKEN_TTL_SECONDS else 'OFF'} seconds")
+    print(f"Base path: {BASE_PATH if BASE_PATH else '/'}")
     print(f"ProxyFix: {'ON' if ENABLE_PROXY_FIX else 'OFF'} (supports X-Forwarded-Host/Proto/Prefix)\n")
 
     print("Endpoints (others -> 404 empty body):")
-    print("  GET  /hc")
-    print("  GET  /hp  (no auth)")
-    print("  GET  /ud  (no auth)")
-    print("  POST /ud  (upload; key optional depending config)")
-    print("  GET  /ud/f/<token>/<filename> (one-time download; after success -> 404)")
-    print("  GET  /ud/d/<token> (legacy download path)\n")
+    print(f"  GET  {route_path('/hc')}")
+    print(f"  GET  {route_path('/hp')}  (no auth)")
+    print(f"  GET  {route_path('/ud')}  (no auth)")
+    print(f"  POST {route_path('/ud')}  (upload; key optional depending config)")
+    print(f"  PUT  {route_path('/ud')}  (raw upload; needs filename)")
+    print(f"  GET  {route_path('/ud/f/<token>/<filename>')} (one-time download; after success -> 404)\n")
 
     print("Environment variables:")
     print("  UD_API_KEY=...                   # optional; if set, POST /ud requires key")
+    print("  UD_BASE_PATH=/relay             # optional; deploy under a subpath")
     print("  UD_UPLOAD_DIR=./uploads")
     print("  UD_BIND_HOST=::")
     print("  UD_BIND_PORT=8000")
@@ -804,6 +996,19 @@ def print_startup_banner():
         print(f'  curl -sS -F "file=@/path/to/file" "http://<host>:{BIND_PORT}/ud"\n')
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="UD Relay (local)")
+    parser.add_argument("-p", dest="random_port", action="store_true", help="随机端口")
+    parser.add_argument("--port", type=int, help="指定监听端口")
+    args = parser.parse_args()
+
+    if args.port is not None and args.random_port:
+        parser.error("不能同时使用 -p 和 --port")
+
+    if args.port is not None:
+        BIND_PORT = int(args.port)
+    elif args.random_port:
+        BIND_PORT = _pick_random_port(BIND_HOST)
+
     cleanup_tokens()
     threading.Thread(target=cleanup_daemon, daemon=True).start()
     print_startup_banner()

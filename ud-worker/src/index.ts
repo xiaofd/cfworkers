@@ -105,6 +105,45 @@ function getApiKeyFromReq(req: Request): string {
   return "";
 }
 
+function parseContentLength(req: Request): number | null {
+  const v = req.headers.get("Content-Length") || "";
+  if (!v) return null;
+  const n = Number(v);
+  if (!Number.isFinite(n) || n < 0) return null;
+  return n;
+}
+
+function parseContentDispositionFilename(cd: string): string {
+  if (!cd) return "";
+  const star = /filename\*\s*=\s*UTF-8''([^;]+)/i.exec(cd);
+  if (star?.[1]) {
+    try {
+      return decodeURIComponent(star[1]);
+    } catch {
+      return star[1];
+    }
+  }
+  const quoted = /filename\s*=\s*"([^"]+)"/i.exec(cd);
+  if (quoted?.[1]) return quoted[1];
+  const bare = /filename\s*=\s*([^;]+)/i.exec(cd);
+  if (bare?.[1]) return bare[1].trim().replace(/^"+|"+$/g, "");
+  return "";
+}
+
+function rawUploadFilename(req: Request, path: string): string {
+  const u = new URL(req.url);
+  const fromQuery = u.searchParams.get("name") || u.searchParams.get("filename") || "";
+  const fromHeader = req.headers.get("X-Filename") || req.headers.get("X-File-Name") || "";
+  const fromCd = parseContentDispositionFilename(req.headers.get("Content-Disposition") || "");
+  let fromPath = "";
+  const parts = path.split("/").filter(Boolean); // ["ud", "..."]
+  if (parts.length >= 2 && parts[0] === "ud") {
+    fromPath = parts.slice(1).join("/");
+  }
+  const raw = fromQuery || fromHeader || fromCd || fromPath;
+  return sanitizeFilename(raw);
+}
+
 function maxBytes(env: Env): number {
   const mb = parseInt(env.UD_MAX_MB || "", 10);
   return (Number.isFinite(mb) && mb > 0 ? mb : DEFAULTS.MAX_MB) * 1024 * 1024;
@@ -206,9 +245,13 @@ function helpText(origin: string, env: Env): string {
   const bp = basePath(env);
   const base = origin + (bp || "");
   const curlKey = c.REQUIRE_KEY ? "YOUR_KEY" : "";
-  const curl = c.REQUIRE_KEY
+  const keyParam = c.REQUIRE_KEY ? `&key=${curlKey}` : "";
+  const keyOnly = c.REQUIRE_KEY ? `?key=${curlKey}` : "";
+  const curlMultipart = c.REQUIRE_KEY
     ? `curl -sS -F "file=@/path/to/file" "${base}/ud?key=${curlKey}"`
     : `curl -sS -F "file=@/path/to/file" "${base}/ud"`;
+  const curlPut = `curl -sS -T "/path/to/file" "${base}/ud?name=yourfile.ext${keyParam}"`;
+  const curlText = `curl -sS -d "hello" "${base}/ud${keyOnly}"   # 保存为 <timestamp>.txt`;
 
   return `UD Relay 说明（Workers + R2 + Durable Objects）
 
@@ -221,10 +264,14 @@ function helpText(origin: string, env: Env): string {
 - GET  ${base}/hp                帮助文档（本页）
 - GET  ${base}/ud                浏览器上传页；命令行访问时返回本说明
 - POST ${base}/ud                上传文件（multipart/form-data，字段名 file；可选字段 key）
+- PUT  ${base}/ud                直传文件（需提供文件名，见示例）
+- POST ${base}/ud                直传文本（非 multipart；保存为 <timestamp>.txt）
 - GET  ${base}/ud/f/<token>/<filename>   一次性下载，成功后该 token 失效并删除对象
 
 上传示例
-  ${curl}
+  ${curlMultipart}
+  ${curlPut}
+  ${curlText}
 
 规则
 - 最大上传：${c.MAX_MB}MB
@@ -232,6 +279,7 @@ function helpText(origin: string, env: Env): string {
 - 待下载上限：${c.MAX_PENDING} 份（0 关闭；超出会从最旧的 ready 起淘汰）
 - 链接 TTL：${c.TTL_SEC}s（0 关闭；超时会清理）
 - 上传鉴权：${c.REQUIRE_KEY ? "需要 key（UD_API_KEY 已配置）" : "无需 key"}
+- 直传文件名：PUT 需提供 name / filename、X-Filename 或 /ud/<filename>
 - 同名覆盖：同一个文件名再次上传会覆盖并删除旧对象
 - 下载一次性：token 在 claim 成功后立即标记为已领取
 
@@ -263,9 +311,13 @@ function udHtml(origin: string, env: Env, message = "", ok = true, link = ""): s
       </div>`
     : "";
 
-  const curl = needKey
+  const keyParam = needKey ? `&key=YOUR_KEY` : "";
+  const keyOnly = needKey ? `?key=YOUR_KEY` : "";
+  const curlMultipart = needKey
     ? `curl -sS -F "file=@/path/to/file" "${base}/ud?key=YOUR_KEY"`
     : `curl -sS -F "file=@/path/to/file" "${base}/ud"`;
+  const curlPut = `curl -sS -T "/path/to/file" "${base}/ud?name=yourfile.ext${keyParam}"`;
+  const curlText = `curl -sS -d "hello" "${base}/ud${keyOnly}"   # 保存为 <timestamp>.txt`;
 
   return `<!doctype html>
 <html lang="zh-CN"><head>
@@ -320,7 +372,9 @@ ${msgBlock}
 
 <div class="section">
   <div class="section-title">curl 示例</div>
-  <pre class="code">${curl}</pre>
+  <pre class="code">${curlMultipart}
+${curlPut}
+${curlText}</pre>
 </div>
 
 <div class="muted" style="margin-top:14px;">帮助：<a href="${base}/hp">${base}/hp</a></div>
@@ -496,6 +550,106 @@ export default {
         return new Response(text, { status: 200, headers: { "Content-Type": "text/plain; charset=utf-8" } });
       }
       return new Response(udHtml(url.origin, env), { status: 200, headers: { "Content-Type": "text/html; charset=utf-8" } });
+    }
+
+    const contentTypeHeader = (request.headers.get("Content-Type") || "").toLowerCase();
+    const isMultipart = contentTypeHeader.includes("multipart/form-data");
+    const isRawText = request.method === "POST" && !isMultipart && path === "/ud";
+    const isRawFile =
+      request.method === "PUT" &&
+      (path === "/ud" || (path.startsWith("/ud/") && !path.startsWith("/ud/f/")));
+
+    if (isRawText || isRawFile) {
+      const c = cfg(env);
+      const ip = getClientIp(request);
+      const key = getApiKeyFromReq(request).trim();
+
+      const size = parseContentLength(request);
+      if (size === null) {
+        return isBrowser(request)
+          ? new Response(udHtml(url.origin, env, "请求缺少 Content-Length，无法确定文件大小。", false), { status: 200, headers: { "Content-Type": "text/html; charset=utf-8" } })
+          : new Response("Length Required\n", { status: 411 });
+      }
+
+      if (size > maxBytes(env)) {
+        return isBrowser(request)
+          ? new Response(udHtml(url.origin, env, `文件过大：最大 ${c.MAX_MB}MB。`, false), { status: 200, headers: { "Content-Type": "text/html; charset=utf-8" } })
+          : new Response(`File too large (max ${c.MAX_MB}MB)\n`, { status: 413 });
+      }
+
+      let filename = "";
+      let contentType = "";
+      if (isRawText) {
+        filename = `${nowSec()}.txt`;
+        contentType = "text/plain; charset=utf-8";
+      } else {
+        filename = rawUploadFilename(request, path);
+        if (!filename) {
+          return isBrowser(request)
+            ? new Response(udHtml(url.origin, env, "缺少文件名：请使用 ?name= 或 /ud/<filename>。", false), { status: 200, headers: { "Content-Type": "text/html; charset=utf-8" } })
+            : new Response("Missing filename (use ?name= or /ud/<filename>)\n", { status: 400 });
+        }
+        contentType = (request.headers.get("Content-Type") || "application/octet-stream").slice(0, 200);
+      }
+
+      const reserveResp = await callStateDO(env, {
+        op: "reserve",
+        ip,
+        key,
+        filename,
+        size,
+        contentType,
+      });
+
+      if (!reserveResp.ok) {
+        if (reserveResp.status === 401) {
+          const msg = "Key 错误或缺失，上传未执行。";
+          return isBrowser(request)
+            ? new Response(udHtml(url.origin, env, msg, false), { status: 200, headers: { "Content-Type": "text/html; charset=utf-8" } })
+            : new Response("Unauthorized\n", { status: 401 });
+        }
+        if (reserveResp.status === 429) {
+          const msg = `上传过于频繁：每 ${c.RATE_LIMIT_SEC}s 仅允许 1 次。`;
+          return isBrowser(request)
+            ? new Response(udHtml(url.origin, env, msg, false), { status: 200, headers: { "Content-Type": "text/html; charset=utf-8" } })
+            : new Response("Too Many Requests\n", { status: 429 });
+        }
+        return empty404();
+      }
+
+      const reserved = (await reserveResp.json()) as { token: string; objectKey: string };
+      const token = reserved.token;
+      const objectKey = reserved.objectKey;
+
+      try {
+        await env.UD_BUCKET.put(objectKey, request.body, {
+          httpMetadata: {
+            contentType,
+          },
+          customMetadata: {
+            filename,
+            uploaded_at: String(nowSec()),
+          },
+        });
+      } catch {
+        ctx.waitUntil(callStateDO(env, { op: "abort", token }).catch(() => undefined));
+        return isBrowser(request)
+          ? new Response(udHtml(url.origin, env, "上传失败：写入存储异常。", false), { status: 200, headers: { "Content-Type": "text/html; charset=utf-8" } })
+          : new Response("Upload failed\n", { status: 500 });
+      }
+
+      ctx.waitUntil(callStateDO(env, { op: "commit", token }).catch(() => undefined));
+
+      const dlPath = withBase(`/ud/f/${encodeURIComponent(token)}/${encodeURIComponent(filename)}`, env);
+      const dlUrl = `${url.origin}${dlPath}`;
+
+      if (isBrowser(request)) {
+        return new Response(udHtml(url.origin, env, "上传成功！", true, dlUrl), {
+          status: 200,
+          headers: { "Content-Type": "text/html; charset=utf-8" },
+        });
+      }
+      return new Response(`OK\n${dlUrl}\n`, { status: 201, headers: { "Content-Type": "text/plain; charset=utf-8" } });
     }
 
     // /ud POST -> upload
