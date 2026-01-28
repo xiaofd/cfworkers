@@ -2,6 +2,10 @@
 
 一次性文件中转：上传成功后生成下载链接，下载 1 次即失效。仅开放 `/hc /hp /ud /ud/f/...`，其他路径均为空 404。
 
+[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/xiaofd/cfworkers/tree/main/ud-worker)
+
+> 一键部署会自动创建 Worker / DO / R2 绑定；需先在 Cloudflare 账号开通 R2。Secrets（如 `UD_API_KEY`）仍需部署后手动配置。
+
 ## 环境准备
 - Node.js 18+，npm
 - Cloudflare 账号，开启 R2 与 Durable Objects
