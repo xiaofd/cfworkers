@@ -86,6 +86,7 @@ wrangler publish
   curl -sS -T "/path/to/file" "https://<your-domain>/ud?name=filename.ext"
   # 需要 key
   curl -sS -T "/path/to/file" "https://<your-domain>/ud?name=filename.ext&key=YOUR_KEY"
+  # 不指定 name 时，自动保存为随机 8 位 .bin
   ```
 - 直传文本（保存为 <timestamp>.txt）：  
   ```bash

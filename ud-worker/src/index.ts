@@ -199,6 +199,15 @@ function b64url(bytes: Uint8Array): string {
   return b64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
 }
 
+function randomName8(): string {
+  const letters = "abcdefghijklmnopqrstuvwxyz";
+  let out = "";
+  const bytes = new Uint8Array(8);
+  crypto.getRandomValues(bytes);
+  for (const b of bytes) out += letters[b % letters.length];
+  return out;
+}
+
 function newToken(): string {
   const bytes = new Uint8Array(24);
   crypto.getRandomValues(bytes);
@@ -250,7 +259,7 @@ function helpText(origin: string, env: Env): string {
   const curlMultipart = c.REQUIRE_KEY
     ? `curl -sS -F "file=@/path/to/file" "${base}/ud?key=${curlKey}"`
     : `curl -sS -F "file=@/path/to/file" "${base}/ud"`;
-  const curlPut = `curl -sS -T "/path/to/file" "${base}/ud?name=yourfile.ext${keyParam}"`;
+  const curlPut = `curl -sS -T "/path/to/file" "${base}/ud?name=yourfile.ext${keyParam}"   # 不指定 name 则保存为随机 8 位 .bin`;
   const curlText = `curl -sS -d "hello" "${base}/ud${keyOnly}"   # 保存为 <timestamp>.txt`;
 
   return `UD Relay 说明（Workers + R2 + Durable Objects）
@@ -279,7 +288,7 @@ function helpText(origin: string, env: Env): string {
 - 待下载上限：${c.MAX_PENDING} 份（0 关闭；超出会从最旧的 ready 起淘汰）
 - 链接 TTL：${c.TTL_SEC}s（0 关闭；超时会清理）
 - 上传鉴权：${c.REQUIRE_KEY ? "需要 key（UD_API_KEY 已配置）" : "无需 key"}
-- 直传文件名：PUT 需提供 name / filename、X-Filename 或 /ud/<filename>
+- 直传文件名：PUT 可用 name / filename、X-Filename 或 /ud/<filename>；缺省则随机 8 位 .bin
 - 同名覆盖：同一个文件名再次上传会覆盖并删除旧对象
 - 下载一次性：token 在 claim 成功后立即标记为已领取
 
@@ -316,7 +325,7 @@ function udHtml(origin: string, env: Env, message = "", ok = true, link = ""): s
   const curlMultipart = needKey
     ? `curl -sS -F "file=@/path/to/file" "${base}/ud?key=YOUR_KEY"`
     : `curl -sS -F "file=@/path/to/file" "${base}/ud"`;
-  const curlPut = `curl -sS -T "/path/to/file" "${base}/ud?name=yourfile.ext${keyParam}"`;
+  const curlPut = `curl -sS -T "/path/to/file" "${base}/ud?name=yourfile.ext${keyParam}"   # 不指定 name 则保存为随机 8 位 .bin`;
   const curlText = `curl -sS -d "hello" "${base}/ud${keyOnly}"   # 保存为 <timestamp>.txt`;
 
   return `<!doctype html>
@@ -584,11 +593,7 @@ export default {
         contentType = "text/plain; charset=utf-8";
       } else {
         filename = rawUploadFilename(request, path);
-        if (!filename) {
-          return isBrowser(request)
-            ? new Response(udHtml(url.origin, env, "缺少文件名：请使用 ?name= 或 /ud/<filename>。", false), { status: 200, headers: { "Content-Type": "text/html; charset=utf-8" } })
-            : new Response("Missing filename (use ?name= or /ud/<filename>)\n", { status: 400 });
-        }
+        if (!filename) filename = `${randomName8()}.bin`;
         contentType = (request.headers.get("Content-Type") || "application/octet-stream").slice(0, 200);
       }
 

@@ -196,6 +196,10 @@ def _parse_content_disposition_filename(cd: str) -> str:
         return m.group(1).strip().strip('"')
     return ""
 
+def _random_name_8() -> str:
+    letters = "abcdefghijklmnopqrstuvwxyz"
+    return "".join(letters[ord(os.urandom(1)) % len(letters)] for _ in range(8))
+
 def extract_raw_filename(path_filename: Optional[str] = None) -> str:
     name = (request.args.get("name") or request.args.get("filename") or "").strip()
     if not name:
@@ -411,11 +415,11 @@ def render_ud_page(message: str = "", level: str = "info", download_url: str = "
     key_note = "需要 key 才能上传" if REQUIRE_UPLOAD_AUTH else "无需 key"
     if REQUIRE_UPLOAD_AUTH:
         curl_multipart = f'curl -sS -F "file=@/path/to/file" "{base}/ud?key=YOUR_KEY"'
-        curl_put = f'curl -sS -T "/path/to/file" "{base}/ud?name=yourfile.ext&key=YOUR_KEY"'
+        curl_put = f'curl -sS -T "/path/to/file" "{base}/ud?name=yourfile.ext&key=YOUR_KEY"   # 不指定 name 则保存为随机 8 位 .bin'
         curl_text = f'curl -sS -d "hello" "{base}/ud?key=YOUR_KEY"   # 保存为 <timestamp>.txt'
     else:
         curl_multipart = f'curl -sS -F "file=@/path/to/file" "{base}/ud"'
-        curl_put = f'curl -sS -T "/path/to/file" "{base}/ud?name=yourfile.ext"'
+        curl_put = f'curl -sS -T "/path/to/file" "{base}/ud?name=yourfile.ext"   # 不指定 name 则保存为随机 8 位 .bin'
         curl_text = f'curl -sS -d "hello" "{base}/ud"   # 保存为 <timestamp>.txt'
 
     if not wants_html():
@@ -514,11 +518,11 @@ a:hover{{text-decoration:underline;}}
 def build_help_text(base: str) -> str:
     if REQUIRE_UPLOAD_AUTH:
         curl_multipart = f'curl -sS -F "file=@/path/to/file" "{base}/ud?key=YOUR_KEY"'
-        curl_put = f'curl -sS -T "/path/to/file" "{base}/ud?name=yourfile.ext&key=YOUR_KEY"'
+        curl_put = f'curl -sS -T "/path/to/file" "{base}/ud?name=yourfile.ext&key=YOUR_KEY"   # 不指定 name 则保存为随机 8 位 .bin'
         curl_text = f'curl -sS -d "hello" "{base}/ud?key=YOUR_KEY"   # 保存为 <timestamp>.txt'
     else:
         curl_multipart = f'curl -sS -F "file=@/path/to/file" "{base}/ud"'
-        curl_put = f'curl -sS -T "/path/to/file" "{base}/ud?name=yourfile.ext"'
+        curl_put = f'curl -sS -T "/path/to/file" "{base}/ud?name=yourfile.ext"   # 不指定 name 则保存为随机 8 位 .bin'
         curl_text = f'curl -sS -d "hello" "{base}/ud"   # 保存为 <timestamp>.txt'
     return f"""UD Relay 说明（Python 版本）
 
@@ -546,7 +550,7 @@ def build_help_text(base: str) -> str:
 - 待下载上限：{MAX_PENDING_FILES} 份（0 关闭；超出会从最旧的 ready 起淘汰）
 - 链接 TTL：{TOKEN_TTL_SECONDS}s（0 关闭；超时会清理）
 - 上传鉴权：{"需要 key（UD_API_KEY 已配置）" if REQUIRE_UPLOAD_AUTH else "无需 key"}
-- 直传文件名：PUT 需提供 name / filename、X-Filename 或 /ud/<filename>
+- 直传文件名：PUT 可用 name / filename、X-Filename 或 /ud/<filename>；缺省则随机 8 位 .bin
 - 同名覆盖：同名文件再次上传会覆盖并删除旧文件
 - 下载一次性：token 在下载成功前会被抢占，成功后删除文件+元数据
 
@@ -670,7 +674,7 @@ def handle_raw_upload(download_name: str, content_type: str):
         return render_ud_page(f"上传过于频繁：每 {RATE_LIMIT_SECONDS}s 仅允许 1 次。", level="err")
 
     if not download_name:
-        return render_ud_page("缺少文件名：请使用 ?name= 或 /ud/<filename>。", level="err") if wants_html() else ("Missing filename (use ?name= or /ud/<filename>)\n", 400)
+        download_name = f"{_random_name_8()}.bin"
 
     content_length = request.content_length
     if content_length is None or content_length < 0:
