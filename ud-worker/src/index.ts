@@ -360,6 +360,11 @@ a:hover{text-decoration:underline;}
 .code{background:rgba(0,0,0,.35);padding:14px;border-radius:12px;overflow:auto;border:1px solid var(--stroke);color:#d9e7ff;}
 .section{margin-top:18px;}
 .section-title{font-weight:700;font-size:14px;color:#dbe6ff;margin-bottom:6px;}
+.textarea{width:100%;min-height:140px;resize:vertical;padding:12px;border-radius:12px;border:1px solid var(--stroke);background:rgba(255,255,255,.04);color:#eaf0ff;outline:none;}
+.textarea:focus{border-color:var(--accent2);box-shadow:0 0 0 3px rgba(125,178,255,.18);}
+.row.tight{gap:8px;}
+.pill{display:inline-block;padding:2px 8px;border:1px solid var(--stroke);border-radius:999px;font-size:12px;color:#cfe0ff;background:rgba(255,255,255,.04);}
+.result{margin-top:10px;font-size:13px;word-break:break-all;}
 @media (max-width:640px){.wrap{padding:26px 14px;}button{width:100%;text-align:center;}}
 </style></head><body>
 <div class="wrap"><div class="card">
@@ -377,6 +382,19 @@ a:hover{text-decoration:underline;}
   </div>
 </form>
 
+<div class="section">
+  <div class="section-title">直接发送文本 <span class="pill">-d</span></div>
+  ${needKey ? `<div class="field-label">Key</div>
+  <input type="text" id="rawKey" placeholder="填入 key（错了会在本页提示）"/>` : ""}
+  <div class="field-label">文本内容</div>
+  <textarea id="rawText" class="textarea" placeholder="在这里输入要传的文本..."></textarea>
+  <div class="row tight">
+    <button type="button" id="rawSend">提交文本</button>
+    <div class="muted">以 text/plain 直传，保存为 &lt;timestamp&gt;.txt</div>
+  </div>
+  <div id="rawResult" class="result muted"></div>
+</div>
+
 ${msgBlock}
 
 <div class="section">
@@ -388,7 +406,47 @@ ${curlText}</pre>
 
 <div class="muted" style="margin-top:14px;">帮助：<a href="${base}/hp">${base}/hp</a></div>
 <div class="muted">健康检查：<a href="${base}/hc">${base}/hc</a></div>
-</div></div></body></html>`;
+</div></div>
+<script>
+(() => {
+  const btn = document.getElementById("rawSend");
+  if (!btn) return;
+  const result = document.getElementById("rawResult");
+  const textEl = document.getElementById("rawText");
+  const keyEl = document.getElementById("rawKey");
+  const baseUrl = "${base}/ud";
+  const setResult = (msg, ok) => {
+    if (!result) return;
+    result.textContent = msg;
+    result.style.color = ok ? "#6de9c5" : "#ff7b7b";
+  };
+  btn.addEventListener("click", async () => {
+    const text = (textEl && textEl.value || "").trim();
+    if (!text) {
+      setResult("请输入文本内容。", false);
+      return;
+    }
+    const headers = { "Content-Type": "text/plain; charset=utf-8" };
+    const key = keyEl && keyEl.value ? keyEl.value.trim() : "";
+    if (key) headers["X-API-Key"] = key;
+    try {
+      setResult("正在上传…", true);
+      const resp = await fetch(baseUrl, { method: "POST", headers, body: text });
+      const body = await resp.text();
+      if (!resp.ok) {
+        setResult(body.trim() || ("上传失败，HTTP " + resp.status), false);
+        return;
+      }
+      const lines = body.trim().split(/\\n/);
+      const dl = lines[lines.length - 1] || body.trim();
+      setResult("上传成功！下载链接：" + dl, true);
+    } catch (e) {
+      setResult("上传失败：网络错误。", false);
+    }
+  });
+})();
+</script>
+</body></html>`;
 }
 
 function helpPageHtml(origin: string, env: Env, text: string): string {
