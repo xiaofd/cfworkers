@@ -1,0 +1,21 @@
+{
+  "name": "worker",
+  "version": "1.0.0",
+  "description": "本目录是基于本项目听书 API 需求的 Worker 实现。",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "dev": "wrangler dev --ip 0.0.0.0 --port 18787",
+    "deploy": "wrangler deploy",
+    "check": "tsc --noEmit"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "private": true,
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260218.0",
+    "typescript": "^5.9.3",
+    "wrangler": "^4.66.0"
+  }
+}

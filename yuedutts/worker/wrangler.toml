@@ -1,0 +1,19 @@
+name = "legado-edge-tts-worker"
+main = "src/index.ts"
+compatibility_date = "2026-02-18"
+workers_dev = true
+
+[assets]
+directory = "../web/static"
+binding = "ASSETS"
+
+[vars]
+TTS_MAX_TEXT_LEN = "20000"
+TTS_MAX_BODY_BYTES = "524288"
+ENGINE_STATUS_CACHE_TTL_SEC = "30"
+EDGE_MAX_CONCURRENCY = "16"
+EDGE_TOKEN_REFRESH_BEFORE_EXPIRY_SEC = "180"
+EDGE_FETCH_TIMEOUT_MS = "180000"
+
+[observability]
+enabled = true

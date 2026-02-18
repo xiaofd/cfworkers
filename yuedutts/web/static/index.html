@@ -1,0 +1,675 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>VoiceCraft - Edge TTS Gateway</title>
+  <style>
+    :root {
+      --primary-color: #2563eb;
+      --primary-hover: #1d4ed8;
+      --secondary-color: #64748b;
+      --success-color: #059669;
+      --warning-color: #d97706;
+      --error-color: #dc2626;
+      --background-color: #f8fafc;
+      --surface-color: #ffffff;
+      --text-primary: #0f172a;
+      --text-secondary: #475569;
+      --border-color: #e2e8f0;
+      --border-focus: #3b82f6;
+      --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+      --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1);
+      --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1);
+      --radius-sm: 6px;
+      --radius-md: 8px;
+      --radius-lg: 12px;
+      --radius-xl: 16px;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+      background-color: var(--background-color);
+      color: var(--text-primary);
+      line-height: 1.6;
+      min-height: 100vh;
+    }
+
+    .container { max-width: 900px; margin: 0 auto; padding: 20px; }
+
+    .header {
+      background: var(--surface-color);
+      border-radius: var(--radius-xl);
+      box-shadow: var(--shadow-lg);
+      padding: 40px 30px;
+      text-align: center;
+      margin-bottom: 24px;
+      border: 1px solid var(--border-color);
+    }
+
+    .header h1 {
+      font-size: 2.5rem;
+      font-weight: 800;
+      color: var(--primary-color);
+      margin-bottom: 12px;
+      letter-spacing: -0.025em;
+    }
+
+    .header .subtitle {
+      font-size: 1.05rem;
+      color: var(--text-secondary);
+      margin-bottom: 18px;
+      font-weight: 500;
+    }
+
+    .header .features {
+      display: flex;
+      justify-content: center;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin-top: 8px;
+    }
+
+    .feature-item {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      color: #334155;
+      font-size: 0.82rem;
+      font-weight: 600;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: #f1f5f9;
+      border: 1px solid var(--border-color);
+    }
+
+    .main-content {
+      background: var(--surface-color);
+      border-radius: var(--radius-xl);
+      box-shadow: var(--shadow-lg);
+      border: 1px solid var(--border-color);
+      overflow: hidden;
+      margin-bottom: 16px;
+    }
+
+    .mode-switch {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      border-bottom: 1px solid var(--border-color);
+      background: #f8fbff;
+    }
+
+    .mode-btn {
+      border: none;
+      background: transparent;
+      color: var(--text-secondary);
+      padding: 14px 12px;
+      font-size: 0.95rem;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .mode-btn.active {
+      color: var(--primary-color);
+      background: #eef4ff;
+      box-shadow: inset 0 -2px 0 var(--primary-color);
+    }
+
+    .mode-btn:hover { background: #f3f8ff; }
+
+    .panel { display: none; padding: 24px; }
+    .panel.active { display: block; }
+
+    .form-group { margin-bottom: 18px; }
+
+    .form-label {
+      display: block;
+      margin-bottom: 8px;
+      font-weight: 600;
+      color: var(--text-primary);
+      font-size: 0.875rem;
+    }
+
+    .form-input, .form-select, .form-textarea {
+      width: 100%;
+      padding: 12px 14px;
+      border: 2px solid var(--border-color);
+      border-radius: var(--radius-md);
+      font-size: 15px;
+      color: var(--text-primary);
+      background: var(--surface-color);
+      transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    .form-input:focus, .form-select:focus, .form-textarea:focus {
+      outline: none;
+      border-color: var(--border-focus);
+      box-shadow: 0 0 0 3px rgb(59 130 246 / 0.1);
+    }
+
+    .form-textarea { min-height: 120px; resize: vertical; font-family: inherit; }
+
+    .controls-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 16px;
+      margin-bottom: 4px;
+    }
+
+    .slider-field {
+      display: grid;
+      grid-template-columns: 1fr 92px;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .form-range {
+      width: 100%;
+      height: 6px;
+      border-radius: 999px;
+      appearance: none;
+      background: linear-gradient(90deg, #dbeafe, #93c5fd);
+      border: 1px solid #bfdbfe;
+    }
+
+    .form-range::-webkit-slider-thumb {
+      appearance: none;
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: var(--primary-color);
+      border: 2px solid #fff;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.2);
+      cursor: grab;
+    }
+
+    .form-range::-moz-range-thumb {
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: var(--primary-color);
+      border: 2px solid #fff;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.2);
+      cursor: grab;
+    }
+
+    .btn-row {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 10px;
+      margin-top: 12px;
+    }
+
+    .btn-primary {
+      background: var(--primary-color);
+      color: #fff;
+      border: 1px solid var(--primary-hover);
+      padding: 12px 14px;
+      border-radius: var(--radius-md);
+      font-weight: 700;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .btn-primary:hover { background: var(--primary-hover); transform: translateY(-1px); box-shadow: var(--shadow-md); }
+
+    .btn-secondary {
+      background: #fff;
+      color: #1d4ed8;
+      border: 1px solid #c7d2fe;
+      padding: 12px 14px;
+      border-radius: var(--radius-md);
+      font-weight: 700;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .btn-secondary:hover { background: #eef2ff; }
+
+    .result-container {
+      margin-top: 14px;
+      padding: 14px;
+      background: var(--background-color);
+      border-radius: var(--radius-lg);
+      border: 1px solid var(--border-color);
+    }
+
+    .mono {
+      font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.84rem;
+      background: #f8fbff;
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-md);
+      padding: 10px;
+      white-space: pre-wrap;
+      word-break: break-all;
+      overflow-x: auto;
+    }
+
+    .status { min-height: 20px; color: var(--text-secondary); font-size: 0.9rem; margin-top: 8px; }
+    .hint { color: var(--text-secondary); font-size: 0.82rem; margin-top: 6px; }
+
+    .audio-player { width: 100%; margin-top: 10px; border-radius: 12px; }
+    .download-link { display: inline-block; margin-top: 8px; color: var(--primary-color); text-decoration: none; font-weight: 700; }
+
+    .stats-card {
+      background: var(--surface-color);
+      border-radius: var(--radius-xl);
+      box-shadow: var(--shadow-lg);
+      border: 1px solid var(--border-color);
+      padding: 20px;
+    }
+
+    .stats-title { font-size: 1.1rem; font-weight: 700; margin-bottom: 12px; }
+
+    .metric-grid { display: grid; gap: 10px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+
+    .metric {
+      border: 1px solid var(--border-color);
+      border-radius: var(--radius-md);
+      background: #f8fbff;
+      padding: 10px;
+    }
+
+    .metric .k { font-size: .78rem; color: var(--text-secondary); }
+    .metric .v { font-size: 1.04rem; font-weight: 700; margin-top: 2px; }
+
+    .chip {
+      display: inline-block;
+      margin: 4px 6px 0 0;
+      padding: 3px 8px;
+      border: 1px solid #c7d2fe;
+      border-radius: 999px;
+      font-size: .78rem;
+      background: #eef2ff;
+      color: #1e3a8a;
+    }
+
+    .chip.bad { border-color: #fecdd3; background: #fff1f2; color: #9f1239; }
+    .meta { margin-top: 8px; font-size: .82rem; color: var(--text-secondary); }
+
+    @media (max-width: 720px) {
+      .container { padding: 14px; }
+      .header { padding: 28px 18px; }
+      .header h1 { font-size: 2rem; }
+      .mode-switch { grid-template-columns: 1fr; }
+      .panel { padding: 18px; }
+      .metric-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <section class="header">
+      <h1>VoiceCraft</h1>
+      <p class="subtitle">Edge TTS 多音色配置与在线合成平台</p>
+      <div class="features">
+        <span class="feature-item">阅读网络导入</span>
+        <span class="feature-item">多音色 + 风格</span>
+      </div>
+      <div id="engineStatus" style="margin-top:10px;"></div>
+    </section>
+
+    <section class="main-content">
+      <div class="mode-switch">
+        <button type="button" class="mode-btn active" id="configModeBtn">⚙️ 阅读配置</button>
+        <button type="button" class="mode-btn" id="testModeBtn">🎧 在线试听</button>
+      </div>
+
+      <div class="panel active" id="configPanel">
+        <div class="controls-grid">
+          <div class="form-group">
+            <label class="form-label" for="engineConfig">引擎</label>
+            <select class="form-select" id="engineConfig"></select>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="voiceConfig">音色</label>
+            <select class="form-select" id="voiceConfig"></select>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="networkUrl">网络导入 URL</label>
+          <div class="mono" id="networkUrl">加载中...</div>
+        </div>
+
+        <div class="btn-row">
+          <button class="btn-primary" id="copyNetworkUrl">📋 复制当前网络导入 URL</button>
+          <button class="btn-secondary" id="copyAllNetworkUrls">📚 复制批量网络导入 URL</button>
+          <button class="btn-secondary" id="copyJson">🧾 复制当前配置 JSON</button>
+        </div>
+        <div class="status" id="guideStatus"></div>
+
+        <div class="result-container">
+          <label class="form-label" for="jsonOut">导入 JSON</label>
+          <pre class="mono" id="jsonOut">加载中...</pre>
+        </div>
+      </div>
+
+      <div class="panel" id="testPanel">
+        <div class="form-group">
+          <label class="form-label" for="text">测试文本</label>
+          <textarea class="form-textarea" id="text">你好，这里是 Edge TTS 测试。</textarea>
+        </div>
+
+        <div class="controls-grid">
+          <div class="form-group">
+            <label class="form-label" for="engineTest">引擎</label>
+            <select class="form-select" id="engineTest"></select>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="voiceTest">音色（含描述）</label>
+            <select class="form-select" id="voiceTest"></select>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="styleTest">风格（含描述）</label>
+            <select class="form-select" id="styleTest"></select>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="speed">速度 (5-50)</label>
+            <div class="slider-field">
+              <input class="form-range" id="speed" type="range" min="5" max="50" step="1" value="20" />
+              <input class="form-input" id="speedNum" type="number" min="5" max="50" value="20" />
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="pitch">音调 (-100~100Hz)</label>
+            <div class="slider-field">
+              <input class="form-range" id="pitch" type="range" min="-100" max="100" step="1" value="0" />
+              <input class="form-input" id="pitchNum" type="number" min="-100" max="100" value="0" />
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="volume">音量 (-100~100%)</label>
+            <div class="slider-field">
+              <input class="form-range" id="volume" type="range" min="-100" max="100" step="1" value="0" />
+              <input class="form-input" id="volumeNum" type="number" min="-100" max="100" value="0" />
+            </div>
+          </div>
+        </div>
+
+        <div class="hint">说明：不同音色对风格支持程度不同，不支持时上游会自动退回通用语气。</div>
+
+        <div class="btn-row">
+          <button class="btn-primary" id="playBtn">▶️ 生成并播放</button>
+          <button class="btn-secondary" id="copyUrl">🔗 复制当前试听 URL</button>
+        </div>
+
+        <div class="status" id="status"></div>
+        <audio id="player" class="audio-player" controls preload="none"></audio>
+        <a id="download" class="download-link" style="display:none;" download="tts-test.mp3">下载本次音频</a>
+      </div>
+    </section>
+
+    <section class="stats-card">
+      <div class="stats-title">运行统计（5s 自动刷新）</div>
+      <div class="metric-grid">
+        <div class="metric"><div class="k">当前并发</div><div class="v" id="mInFlight">-</div></div>
+        <div class="metric"><div class="k">峰值并发</div><div class="v" id="mMaxConcurrent">-</div></div>
+        <div class="metric"><div class="k">今日调用</div><div class="v" id="mTodayRequests">-</div></div>
+        <div class="metric"><div class="k">本月调用</div><div class="v" id="mMonthRequests">-</div></div>
+        <div class="metric"><div class="k">总成功/失败</div><div class="v" id="mTotalResult">-</div></div>
+        <div class="metric"><div class="k">累计流量</div><div class="v" id="mTotalTraffic">-</div></div>
+        <div class="metric"><div class="k">今日流量</div><div class="v" id="mTodayTraffic">-</div></div>
+        <div class="metric"><div class="k">本月流量</div><div class="v" id="mMonthTraffic">-</div></div>
+      </div>
+      <div class="meta" id="statsMeta">-</div>
+      <div id="statsEngines"></div>
+    </section>
+  </div>
+
+  <script>
+    let VOICES = [];
+    let defaultVoice = 'zh-CN-XiaoxiaoNeural';
+
+    const STYLES = [
+      ['general','general（通用平稳）'],['chat','chat（口语聊天）'],['customerservice','customerservice（客服应答）'],['newscast','newscast（新闻播报）'],
+      ['narration-professional','narration-professional（专业解说）'],['cheerful','cheerful（明快活泼）'],['sad','sad（低沉克制）'],['angry','angry（强调语气）'],
+      ['affectionate','affectionate（亲切温暖）'],['calm','calm（平静舒缓）']
+    ];
+
+    const $ = (id) => document.getElementById(id);
+    const configModeBtn = $('configModeBtn'), testModeBtn = $('testModeBtn'), configPanel = $('configPanel'), testPanel = $('testPanel');
+    const engineStatusEl = $('engineStatus'), engineConfig = $('engineConfig'), voiceConfig = $('voiceConfig'), engineTest = $('engineTest'), voiceTest = $('voiceTest'), styleTest = $('styleTest');
+    const textEl = $('text'), speedEl = $('speed'), speedNumEl = $('speedNum'), pitchEl = $('pitch'), pitchNumEl = $('pitchNum'), volumeEl = $('volume'), volumeNumEl = $('volumeNum');
+    const networkUrlOut = $('networkUrl'), jsonOut = $('jsonOut'), guideStatusEl = $('guideStatus'), statusEl = $('status'), player = $('player'), download = $('download');
+
+    const mInFlight = $('mInFlight'), mMaxConcurrent = $('mMaxConcurrent'), mTodayRequests = $('mTodayRequests'), mMonthRequests = $('mMonthRequests');
+    const mTotalResult = $('mTotalResult'), mTotalTraffic = $('mTotalTraffic'), mTodayTraffic = $('mTodayTraffic'), mMonthTraffic = $('mMonthTraffic');
+    const statsMeta = $('statsMeta'), statsEngines = $('statsEngines');
+
+    function fillSelect(select, items, selected) {
+      select.innerHTML = '';
+      items.forEach(([v,l]) => { const op = document.createElement('option'); op.value = v; op.textContent = l; if (v === selected) op.selected = true; select.appendChild(op); });
+    }
+
+    function bindSlider(slider, num, min, max) {
+      const clamp = (v) => Math.max(min, Math.min(max, v));
+      slider.addEventListener('input', () => { num.value = slider.value; });
+      const sync = () => { const raw = Number(num.value); if (!Number.isFinite(raw)) return; const val = clamp(Math.round(raw)); num.value = String(val); slider.value = String(val); };
+      num.addEventListener('input', sync); num.addEventListener('blur', sync);
+      num.value = slider.value;
+    }
+
+    function modeConfig() { configModeBtn.classList.add('active'); testModeBtn.classList.remove('active'); configPanel.classList.add('active'); testPanel.classList.remove('active'); }
+    function modeTest() { testModeBtn.classList.add('active'); configModeBtn.classList.remove('active'); testPanel.classList.add('active'); configPanel.classList.remove('active'); }
+    configModeBtn.onclick = modeConfig; testModeBtn.onclick = modeTest;
+
+    fillSelect(styleTest, STYLES, 'general');
+
+    bindSlider(speedEl, speedNumEl, 5, 50);
+    bindSlider(pitchEl, pitchNumEl, -100, 100);
+    bindSlider(volumeEl, volumeNumEl, -100, 100);
+
+    voiceConfig.addEventListener('change', () => { voiceTest.value = voiceConfig.value; refreshConfig(); });
+    voiceTest.addEventListener('change', () => { voiceConfig.value = voiceTest.value; refreshConfig(); });
+    engineConfig.addEventListener('change', () => { engineTest.value = engineConfig.value || 'edge'; refreshConfig(); });
+    engineTest.addEventListener('change', () => { engineConfig.value = engineTest.value || 'edge'; });
+
+    function configUrl() {
+      return location.origin + '/legado-config?engine=' + encodeURIComponent(engineConfig.value || 'edge') + '&voice=' + encodeURIComponent(voiceConfig.value || '');
+    }
+
+    function batchConfigUrl() {
+      const engine = encodeURIComponent(engineConfig.value || 'edge');
+      const seen = new Set();
+      const voices = VOICES
+        .map(([voice]) => voice)
+        .filter((voice) => {
+          if (!voice || seen.has(voice)) return false;
+          seen.add(voice);
+          return true;
+        })
+        .join(',');
+      return location.origin + '/legado-configs?engine=' + engine + '&voices=' + encodeURIComponent(voices);
+    }
+
+    function ttsUrl() {
+      return location.origin + '/tts?engine=' + encodeURIComponent(engineTest.value || 'edge') + '&speakText=' + encodeURIComponent(textEl.value || '测试') + '&speakSpeed=' + encodeURIComponent(speedNumEl.value || '20') + '&voice=' + encodeURIComponent(voiceTest.value || '') + '&style=' + encodeURIComponent(styleTest.value || 'general') + '&pitch=' + encodeURIComponent(pitchNumEl.value || '0') + '&volume=' + encodeURIComponent(volumeNumEl.value || '0');
+    }
+
+    function fallbackCopyText(v) {
+      const ta = document.createElement('textarea');
+      ta.value = v;
+      ta.setAttribute('readonly', 'readonly');
+      ta.style.position = 'fixed';
+      ta.style.top = '-9999px';
+      ta.style.left = '-9999px';
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      let ok = false;
+      try {
+        ok = document.execCommand('copy');
+      } catch {
+        ok = false;
+      }
+      document.body.removeChild(ta);
+      return ok;
+    }
+
+    async function copyText(v, target, label, okText) {
+      const value = String(v || '');
+      if (!value.trim()) {
+        if (target) target.textContent = label + '为空，未复制';
+        return;
+      }
+      let copied = false;
+      try {
+        if (navigator.clipboard && window.isSecureContext) {
+          await navigator.clipboard.writeText(value);
+          copied = true;
+        }
+      } catch {
+        copied = false;
+      }
+      if (!copied) copied = fallbackCopyText(value);
+      if (target) target.textContent = copied ? (okText || ('已复制：' + label)) : ('复制失败：' + label + '（请手动复制）');
+    }
+
+    async function refreshConfig() {
+      networkUrlOut.textContent = configUrl();
+      try {
+        const res = await fetch(configUrl());
+        if (!res.ok) throw new Error();
+        const data = await res.json();
+        jsonOut.textContent = JSON.stringify(data, null, 2);
+      } catch {
+        guideStatusEl.textContent = '配置加载失败';
+      }
+    }
+
+    function formatBytes(n) {
+      if (!Number.isFinite(n) || n < 0) return '-';
+      if (n < 1024) return n + ' B';
+      const kb = n / 1024; if (kb < 1024) return kb.toFixed(1) + ' KB';
+      const mb = kb / 1024; if (mb < 1024) return mb.toFixed(2) + ' MB';
+      return (mb / 1024).toFixed(2) + ' GB';
+    }
+
+    function formatUptime(sec) {
+      if (!Number.isFinite(sec) || sec < 0) return '-';
+      const d = Math.floor(sec / 86400), h = Math.floor((sec % 86400) / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
+      if (d > 0) return d + 'd ' + h + 'h ' + m + 'm';
+      if (h > 0) return h + 'h ' + m + 'm ' + s + 's';
+      if (m > 0) return m + 'm ' + s + 's';
+      return s + 's';
+    }
+
+    async function loadStats() {
+      try {
+        const res = await fetch('/stats', { cache: 'no-store' });
+        if (!res.ok) throw new Error();
+        const s = await res.json();
+
+        mInFlight.textContent = String(s.inFlight || 0);
+        mMaxConcurrent.textContent = String(s.maxConcurrent || 0);
+        mTodayRequests.textContent = String((s.today && s.today.requests) || 0);
+        mMonthRequests.textContent = String((s.month && s.month.requests) || 0);
+        mTotalResult.textContent = String((s.total && s.total.success) || 0) + ' / ' + String((s.total && s.total.failed) || 0);
+        mTotalTraffic.textContent = formatBytes((s.total && s.total.audioBytes) || 0);
+        mTodayTraffic.textContent = formatBytes((s.today && s.today.audioBytes) || 0);
+        mMonthTraffic.textContent = formatBytes((s.month && s.month.audioBytes) || 0);
+        statsMeta.textContent = '今日 ' + (s.todayKey || '-') + ' | 本月 ' + (s.monthKey || '-') + ' | 运行时长 ' + formatUptime(Number(s.uptimeSec || 0));
+
+        statsEngines.innerHTML = '';
+        const engines = s.engines || {};
+        Object.keys(engines).forEach((k) => {
+          const d = engines[k] || {};
+          const chip = document.createElement('span');
+          chip.className = 'chip' + ((d.failed || 0) > 0 ? ' bad' : '');
+          chip.textContent = k + ' 请求 ' + (d.requests || 0) + ' 成功 ' + (d.success || 0) + ' 失败 ' + (d.failed || 0) + ' 流量 ' + formatBytes(d.audioBytes || 0);
+          statsEngines.appendChild(chip);
+        });
+      } catch {
+        statsMeta.textContent = '统计获取失败';
+      }
+    }
+
+    async function loadEngines() {
+      try {
+        const res = await fetch('/engines');
+        if (!res.ok) throw new Error();
+        const data = await res.json();
+        const items = (data.engines || []).map((e) => [e.engine, (e.engine || 'edge') + (e.available ? '' : ' (不可用)')]);
+        fillSelect(engineConfig, items.length ? items : [['edge', 'edge']], 'edge');
+        fillSelect(engineTest, items.length ? items : [['edge', 'edge']], 'edge');
+        engineStatusEl.innerHTML = '';
+        (data.engines || []).forEach((e) => {
+          const chip = document.createElement('span');
+          chip.className = 'chip' + (e.available ? '' : ' bad');
+          chip.textContent = (e.engine || 'edge') + ': ' + (e.available ? '可用' : '不可用');
+          engineStatusEl.appendChild(chip);
+        });
+      } catch {
+        engineStatusEl.textContent = '引擎状态加载失败';
+      }
+    }
+
+    async function loadVoices() {
+      try {
+        const res = await fetch('/voices');
+        if (!res.ok) throw new Error();
+        const data = await res.json();
+        const voices = Array.isArray(data.voices) ? data.voices : [];
+        VOICES = voices
+          .map((item) => [item.voice, item.label])
+          .filter(([voice, label]) => !!voice && !!label);
+        defaultVoice = data.defaultVoice || defaultVoice;
+      } catch {
+        VOICES = [['zh-CN-XiaoxiaoNeural', '晓晓（女，通用自然）']];
+        defaultVoice = 'zh-CN-XiaoxiaoNeural';
+      }
+      fillSelect(voiceConfig, VOICES, defaultVoice);
+      fillSelect(voiceTest, VOICES, defaultVoice);
+    }
+
+    $('copyNetworkUrl').addEventListener('click', () => copyText(configUrl(), guideStatusEl, '当前网络导入 URL'));
+    $('copyAllNetworkUrls').addEventListener('click', () => {
+      const url = batchConfigUrl();
+      const count = Array.from(new Set(VOICES.map(([voice]) => voice).filter(Boolean))).length;
+      copyText(url, guideStatusEl, '批量网络导入 URL', '已复制：批量网络导入 URL（含 ' + count + ' 条配置）');
+    });
+    $('copyJson').addEventListener('click', () => copyText(jsonOut.textContent || '', guideStatusEl, '当前配置 JSON'));
+    $('copyUrl').addEventListener('click', () => copyText(ttsUrl(), statusEl, '当前试听 URL'));
+
+    $('playBtn').addEventListener('click', async () => {
+      const s = Number(speedNumEl.value), p = Number(pitchNumEl.value), v = Number(volumeNumEl.value);
+      if (!Number.isFinite(s) || s < 5 || s > 50) { statusEl.textContent = '速度必须是 5-50'; return; }
+      if (!Number.isFinite(p) || p < -100 || p > 100) { statusEl.textContent = '音调必须是 -100~100'; return; }
+      if (!Number.isFinite(v) || v < -100 || v > 100) { statusEl.textContent = '音量必须是 -100~100'; return; }
+      if (!textEl.value.trim()) { statusEl.textContent = '请输入测试文本'; return; }
+
+      statusEl.textContent = '正在生成音频，请稍候...';
+      try {
+        const res = await fetch(ttsUrl());
+        if (!res.ok) throw new Error();
+        const blob = await res.blob();
+        const u = URL.createObjectURL(blob);
+        player.src = u;
+        download.href = u;
+        download.style.display = 'inline-block';
+        statusEl.textContent = '生成成功，大小 ' + (blob.size / 1024).toFixed(1) + ' KB';
+        await player.play();
+        loadStats();
+      } catch {
+        statusEl.textContent = '生成失败';
+      }
+    });
+
+    (async () => {
+      await loadEngines();
+      await loadVoices();
+      await refreshConfig();
+      await loadStats();
+      setInterval(loadStats, 5000);
+    })();
+  </script>
+</body>
+</html>

@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.venv/
+
+# Project runtime files
+*.log
+log.txt
+*.pid
+uvicorn-*.log
+uvicorn-*.pid
+.uvicorn-*.pid
+.ui_server.pid
+
+# Persisted runtime data
+data/runtime_stats.json
+data/*.tmp
+
+# Node.js / Cloudflare Worker
+worker/node_modules/
+worker/.wrangler/
+worker/.dev.vars
+worker/.env
+worker/.env.*
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
