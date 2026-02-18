@@ -4,7 +4,7 @@ compatibility_date = "2026-02-18"
 workers_dev = true
 
 [assets]
-directory = "../web/static"
+directory = "./static"
 binding = "ASSETS"
 
 [vars]

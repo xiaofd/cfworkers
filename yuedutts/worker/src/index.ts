@@ -7,7 +7,7 @@
  * - GET/POST /tts
  * - GET  /stats
  *
- * UI page is shared with Python app at ../web/static/index.html via Wrangler assets.
+ * UI page is served from worker/static/index.html via Wrangler assets.
  */
 
 interface Env {

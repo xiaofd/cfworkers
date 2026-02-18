@@ -60,7 +60,7 @@ docker compose -f deploy/docker/docker-compose.yml logs -f
 ## Cloudflare Worker 一键部署
 一键部署到 `xiaofd/cfworkers` 仓库中的 `yuedutts` 子目录：
 
-[![Deploy to Cloudflare Workers](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/xiaofd/cfworkers/tree/main/yuedutts)
+[![Deploy to Cloudflare Workers](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/xiaofd/cfworkers/tree/main/yuedutts/worker)
 
 本地调试 Worker：
 ```bash
