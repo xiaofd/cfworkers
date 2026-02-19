@@ -444,9 +444,10 @@
     const mTotalResult = $('mTotalResult'), mTotalTraffic = $('mTotalTraffic'), mTodayTraffic = $('mTodayTraffic'), mMonthTraffic = $('mMonthTraffic');
     const statsMeta = $('statsMeta'), statsEngines = $('statsEngines');
     const API_BASE = (() => {
-      const p = location.pathname || '/';
-      if (p === '/tts' || p === '/tts/' || p.startsWith('/tts/')) return '/tts';
-      return '';
+      let p = location.pathname || '/';
+      p = p.replace(/\/index\.html$/, '');
+      p = p.replace(/\/+$/, '');
+      return p === '/' ? '' : p;
     })();
 
     function apiUrl(path) {

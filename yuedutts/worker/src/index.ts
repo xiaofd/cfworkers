@@ -625,7 +625,7 @@ function noStoreHeaders(): Record<string, string> {
   };
 }
 
-function normalizeRoutePath(pathname: string, request: Request): string {
+function normalizeRoutePath(pathname: string): string {
   const trimSlash = (v: string): string => (v.length > 1 && v.endsWith("/") ? v.slice(0, -1) : v);
   const raw = pathname || "/";
   const base = trimSlash(raw);
@@ -634,18 +634,17 @@ function normalizeRoutePath(pathname: string, request: Request): string {
     return "/";
   }
 
-  // Support mounting worker under /tts/* route on a shared domain.
-  if (base === "/tts" || base.startsWith("/tts/")) {
-    const sub = base.slice(4) || "/";
-    if (sub === "/" || sub === "/index.html") {
-      const hasQuery = new URL(request.url).search.length > 0;
-      const accept = request.headers.get("accept") || "";
-      if (!hasQuery && accept.includes("text/html")) {
-        return "/";
-      }
-      return "/tts";
+  if (base.endsWith("/index.html")) {
+    return "/";
+  }
+
+  const apiRoutes = ["/healthz", "/engines", "/voices", "/legado-config", "/legado-configs", "/stats", "/tts"];
+  for (const route of apiRoutes) {
+    if (base === route) return route;
+    if (base.endsWith(route)) {
+      const prefix = base.slice(0, base.length - route.length);
+      if (prefix === "" || prefix.endsWith("/")) return route;
     }
-    return trimSlash(sub);
   }
 
   return base;
@@ -672,7 +671,7 @@ export default {
     }
 
     const url = new URL(request.url);
-    const path = normalizeRoutePath(url.pathname, request);
+    const path = normalizeRoutePath(url.pathname);
 
     try {
       if (path === "/" || path === "") {
@@ -778,6 +777,10 @@ export default {
         }
       }
 
+      // Allow UI under arbitrary path prefixes (e.g. /tts/, /reader/tts/, /foo/bar/).
+      if (request.method === "GET" && (request.headers.get("accept") || "").includes("text/html")) {
+        return serveSharedIndex(request, env);
+      }
       return json({ detail: "Not Found" }, 404);
     } catch (err) {
       if (err instanceof HttpError) {
