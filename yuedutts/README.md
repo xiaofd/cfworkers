@@ -65,6 +65,8 @@ docker compose -f deploy/docker/docker-compose.yml logs -f
 
 [![Deploy to Cloudflare Workers](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/xiaofd/cfworkers/tree/main/yuedutts/worker)
 
+部署触发标记：`2026-02-19`
+
 本地调试 Worker：
 ```bash
 cd worker
