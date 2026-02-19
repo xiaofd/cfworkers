@@ -642,8 +642,7 @@ function normalizeRoutePath(pathname: string): string {
   for (const route of apiRoutes) {
     if (base === route) return route;
     if (base.endsWith(route)) {
-      const prefix = base.slice(0, base.length - route.length);
-      if (prefix === "" || prefix.endsWith("/")) return route;
+      return route;
     }
   }
 
@@ -671,6 +670,11 @@ export default {
     }
 
     const url = new URL(request.url);
+    const accept = request.headers.get("accept") || "";
+    const wantsHtml = request.method === "GET" && url.search === "" && accept.includes("text/html");
+    if (wantsHtml && (url.pathname === "/" || url.pathname.endsWith("/") || url.pathname.endsWith("/index.html"))) {
+      return serveSharedIndex(request, env);
+    }
     const path = normalizeRoutePath(url.pathname);
 
     try {

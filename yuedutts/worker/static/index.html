@@ -444,10 +444,16 @@
     const mTotalResult = $('mTotalResult'), mTotalTraffic = $('mTotalTraffic'), mTodayTraffic = $('mTodayTraffic'), mMonthTraffic = $('mMonthTraffic');
     const statsMeta = $('statsMeta'), statsEngines = $('statsEngines');
     const API_BASE = (() => {
-      let p = location.pathname || '/';
-      p = p.replace(/\/index\.html$/, '');
-      p = p.replace(/\/+$/, '');
-      return p === '/' ? '' : p;
+      const raw = location.pathname || '/';
+      const noIndex = raw.replace(/\/index\.html$/, '');
+      const trimmed = noIndex.replace(/\/+$/, '');
+      if (!trimmed || trimmed === '/') return '';
+      const segs = trimmed.split('/').filter(Boolean);
+      if (segs.length === 0) return '';
+      if (raw.endsWith('/') || raw.endsWith('/index.html') || segs.length === 1) {
+        return '/' + segs.join('/');
+      }
+      return '/' + segs.slice(0, -1).join('/');
     })();
 
     function apiUrl(path) {
