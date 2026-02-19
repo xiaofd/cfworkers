@@ -659,6 +659,7 @@ async function serveSharedIndex(req: Request, env: Env): Promise<Response> {
   }
   const headers = new Headers(resp.headers);
   Object.entries(corsHeaders()).forEach(([k, v]) => headers.set(k, v));
+  Object.entries(noStoreHeaders()).forEach(([k, v]) => headers.set(k, v));
   return new Response(resp.body, { status: 200, headers });
 }
 
