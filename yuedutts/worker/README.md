@@ -25,3 +25,5 @@ npx wrangler deploy
 - 仅支持 `edge` 引擎。
 - `/tts` 支持参数：`engine,speakText,text,speakSpeed,rate,voice,style,pitch,volume`。
 - `/stats` 为 Worker 进程内统计，实例重启或冷启动后会重置。
+
+构建触发标记：`2026-02-19-worker`
