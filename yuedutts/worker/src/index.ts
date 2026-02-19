@@ -625,6 +625,32 @@ function noStoreHeaders(): Record<string, string> {
   };
 }
 
+function normalizeRoutePath(pathname: string, request: Request): string {
+  const trimSlash = (v: string): string => (v.length > 1 && v.endsWith("/") ? v.slice(0, -1) : v);
+  const raw = pathname || "/";
+  const base = trimSlash(raw);
+
+  if (base === "" || base === "/" || base === "/index.html") {
+    return "/";
+  }
+
+  // Support mounting worker under /tts/* route on a shared domain.
+  if (base === "/tts" || base.startsWith("/tts/")) {
+    const sub = base.slice(4) || "/";
+    if (sub === "/" || sub === "/index.html") {
+      const hasQuery = new URL(request.url).search.length > 0;
+      const accept = request.headers.get("accept") || "";
+      if (!hasQuery && accept.includes("text/html")) {
+        return "/";
+      }
+      return "/tts";
+    }
+    return trimSlash(sub);
+  }
+
+  return base;
+}
+
 async function serveSharedIndex(req: Request, env: Env): Promise<Response> {
   const u = new URL(req.url);
   u.pathname = "/index.html";
@@ -646,7 +672,7 @@ export default {
     }
 
     const url = new URL(request.url);
-    const path = url.pathname;
+    const path = normalizeRoutePath(url.pathname, request);
 
     try {
       if (path === "/" || path === "") {

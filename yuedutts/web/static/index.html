@@ -443,6 +443,15 @@
     const mInFlight = $('mInFlight'), mMaxConcurrent = $('mMaxConcurrent'), mTodayRequests = $('mTodayRequests'), mMonthRequests = $('mMonthRequests');
     const mTotalResult = $('mTotalResult'), mTotalTraffic = $('mTotalTraffic'), mTodayTraffic = $('mTodayTraffic'), mMonthTraffic = $('mMonthTraffic');
     const statsMeta = $('statsMeta'), statsEngines = $('statsEngines');
+    const API_BASE = (() => {
+      const p = location.pathname || '/';
+      if (p === '/tts' || p === '/tts/' || p.startsWith('/tts/')) return '/tts';
+      return '';
+    })();
+
+    function apiUrl(path) {
+      return location.origin + API_BASE + path;
+    }
 
     function fillSelect(select, items, selected) {
       select.innerHTML = '';
@@ -473,7 +482,7 @@
     engineTest.addEventListener('change', () => { engineConfig.value = engineTest.value || 'edge'; });
 
     function configUrl() {
-      return location.origin + '/legado-config?engine=' + encodeURIComponent(engineConfig.value || 'edge') + '&voice=' + encodeURIComponent(voiceConfig.value || '');
+      return apiUrl('/legado-config?engine=' + encodeURIComponent(engineConfig.value || 'edge') + '&voice=' + encodeURIComponent(voiceConfig.value || ''));
     }
 
     function batchConfigUrl() {
@@ -487,11 +496,11 @@
           return true;
         })
         .join(',');
-      return location.origin + '/legado-configs?engine=' + engine + '&voices=' + encodeURIComponent(voices);
+      return apiUrl('/legado-configs?engine=' + engine + '&voices=' + encodeURIComponent(voices));
     }
 
     function ttsUrl() {
-      return location.origin + '/tts?engine=' + encodeURIComponent(engineTest.value || 'edge') + '&speakText=' + encodeURIComponent(textEl.value || '测试') + '&speakSpeed=' + encodeURIComponent(speedNumEl.value || '20') + '&voice=' + encodeURIComponent(voiceTest.value || '') + '&style=' + encodeURIComponent(styleTest.value || 'general') + '&pitch=' + encodeURIComponent(pitchNumEl.value || '0') + '&volume=' + encodeURIComponent(volumeNumEl.value || '0');
+      return apiUrl('/tts?engine=' + encodeURIComponent(engineTest.value || 'edge') + '&speakText=' + encodeURIComponent(textEl.value || '测试') + '&speakSpeed=' + encodeURIComponent(speedNumEl.value || '20') + '&voice=' + encodeURIComponent(voiceTest.value || '') + '&style=' + encodeURIComponent(styleTest.value || 'general') + '&pitch=' + encodeURIComponent(pitchNumEl.value || '0') + '&volume=' + encodeURIComponent(volumeNumEl.value || '0'));
     }
 
     function fallbackCopyText(v) {
@@ -564,7 +573,7 @@
 
     async function loadStats() {
       try {
-        const res = await fetch('/stats', { cache: 'no-store' });
+        const res = await fetch(apiUrl('/stats'), { cache: 'no-store' });
         if (!res.ok) throw new Error();
         const s = await res.json();
 
@@ -594,7 +603,7 @@
 
     async function loadEngines() {
       try {
-        const res = await fetch('/engines');
+        const res = await fetch(apiUrl('/engines'));
         if (!res.ok) throw new Error();
         const data = await res.json();
         const items = (data.engines || []).map((e) => [e.engine, (e.engine || 'edge') + (e.available ? '' : ' (不可用)')]);
@@ -614,7 +623,7 @@
 
     async function loadVoices() {
       try {
-        const res = await fetch('/voices');
+        const res = await fetch(apiUrl('/voices'));
         if (!res.ok) throw new Error();
         const data = await res.json();
         const voices = Array.isArray(data.voices) ? data.voices : [];
