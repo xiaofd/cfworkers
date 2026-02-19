@@ -319,9 +319,21 @@ function getLegadoConfigId(engine: string, voice: string): number {
   return 100000 + (c % 900000);
 }
 
-function buildLegadoConfig(origin: string, engine: string, voice: string) {
+function routePrefixFor(pathname: string, route: string): string {
+  const clean = pathname.replace(/\/+$/, "") || "/";
+  if (clean === route) return "";
+  if (clean.endsWith(route)) {
+    const prefix = clean.slice(0, clean.length - route.length);
+    if (!prefix || prefix === "/") return "";
+    return prefix;
+  }
+  return "";
+}
+
+function buildLegadoConfig(origin: string, apiPrefix: string, engine: string, voice: string) {
   const id = getLegadoConfigId(engine, voice);
-  const ttsUrl = `${origin}/tts?engine=${encodeURIComponent(engine)}&speakText={{java.encodeURI(speakText)}}&speakSpeed={{speakSpeed}}&voice=${encodeURIComponent(voice)}&style=general&pitch=0&volume=0`;
+  const prefix = apiPrefix ? `${apiPrefix}` : "";
+  const ttsUrl = `${origin}${prefix}/tts?engine=${encodeURIComponent(engine)}&speakText={{java.encodeURI(speakText)}}&speakSpeed={{speakSpeed}}&voice=${encodeURIComponent(voice)}&style=general&pitch=0&volume=0`;
   return {
     concurrentRate: "0",
     contentType: ENGINE_CONFIG[ENGINE_EDGE].contentType,
@@ -718,7 +730,8 @@ export default {
         }
         const voice = normalizeVoice(url.searchParams.get("voice"));
         const origin = `${url.protocol}//${url.host}`;
-        return json(buildLegadoConfig(origin, engine, voice));
+        const apiPrefix = routePrefixFor(url.pathname, "/legado-config");
+        return json(buildLegadoConfig(origin, apiPrefix, engine, voice));
       }
 
       if (path === "/legado-configs") {
@@ -734,7 +747,8 @@ export default {
           .filter(Boolean);
         const voices = items.length ? Array.from(new Set(items)) : [ENGINE_CONFIG[ENGINE_EDGE].defaultVoice];
         const origin = `${url.protocol}//${url.host}`;
-        const configs = voices.map((voice) => buildLegadoConfig(origin, engine, voice));
+        const apiPrefix = routePrefixFor(url.pathname, "/legado-configs");
+        const configs = voices.map((voice) => buildLegadoConfig(origin, apiPrefix, engine, voice));
         if (wrapped) {
           return json({ engine, count: configs.length, configs });
         }
