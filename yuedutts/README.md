@@ -1,7 +1,10 @@
 # VoiceCraft 阅读听书网关（Edge TTS）
 
-这是一个面向阅读 App（Legado）的 TTS 网关项目，当前仅保留 `edge` 引擎。  
+这是一个基于 Python FastAPI 与 Cloudflare Worker 的阅读听书网关，面向阅读 App（Legado）场景，当前仅保留 `edge` 引擎。  
 项目目标是提供稳定、可部署、可观测的中文听书服务。
+
+## 项目定位
+面向 Legado 听书场景的 Edge TTS 网关，提供 Python 服务端与 Worker 端两套实现，统一暴露 `healthz/engines/voices/legado-config/tts/stats` 能力。
 
 ## 项目特性
 - 阅读网络导入配置（单条与批量）

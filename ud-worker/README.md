@@ -2,6 +2,9 @@
 
 一次性文件中转：上传成功后生成下载链接，下载 1 次即失效。仅开放 `/hc /hp /ud /ud/f/...`，其他路径均为空 404。
 
+## 项目定位
+基于 Cloudflare Worker、R2 与 Durable Objects 的一次性文件中转服务，面向临时分享场景，强调“上传即得链接、下载一次失效”。
+
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/xiaofd/cfworkers/tree/main/ud-worker)
 
 > 一键部署会自动创建 Worker / DO / R2 绑定；需先在 Cloudflare 账号开通 R2。Secrets（如 `UD_API_KEY`）仍需部署后手动配置。
@@ -64,7 +67,7 @@ wrangler dev
 
 5) 正式发布  
 ```bash
-wrangler publish
+wrangler deploy
 ```
 
 ## 环境变量说明

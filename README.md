@@ -7,13 +7,10 @@
 - 以“能快速部署、能直接使用”为目标
 - 覆盖 Python 后端与 Cloudflare Edge 能力
 
-## 简要描述
-xxxx
-
 ## 当前子项目
-- `yuedutts`：阅读场景的 TTS 网关（Python + Worker）
-- `qywx`：企业微信群机器人推送网关（Cloudflare Worker）
-- `ud-worker`：一次性文件中转工具（Cloudflare Worker + R2 + Durable Objects）
+- `yuedutts`：面向阅读 App（Legado）的 Edge TTS 网关，提供 Python FastAPI 与 Cloudflare Worker 两种部署形态。
+- `qywx`：面向企业微信群机器人的消息推送网关，统一多消息类型调用并支持 Token 鉴权与文件上传转发。
+- `ud-worker`：面向一次性文件分享场景的中转服务，基于 Worker、R2 与 Durable Objects 实现单次下载失效与自动清理。
 
 ## 说明
 本仓库内容会根据实际需求持续调整，欢迎按需取用与二次修改。

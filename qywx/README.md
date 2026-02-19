@@ -2,6 +2,9 @@
 
 将企业微信群机器人 Webhook 包装成统一的 HTTP 接口，支持 Token 校验，消息类型覆盖 text / markdown / image / news(link) / file / template_card。文件和图片均可直接通过 multipart/form-data 上传：Worker 内部自动处理上传或计算 base64+md5，再发送到群。
 
+## 项目定位
+基于 Cloudflare Worker 的企业微信群机器人消息推送网关，统一群机器人调用方式，并补齐 Token 鉴权、文件上传转发与图片 md5 自动计算。
+
 ## 环境变量
 - `WEBHOOK_URL`：群机器人 URL（可选）
 - `QYWX_ROBOT_KEY`：机器人 key，若未设置 `WEBHOOK_URL` 则自动拼接为正式地址
@@ -18,7 +21,7 @@
 默认入口：`POST https://<worker>.workers.dev/`
 
 ## 请求格式
-发送接口：`POST /`（或 `/send`），Worker 使用环境变量中的 `WEBHOOK_URL` 或 `QYWX_ROBOT_KEY` 作为唯一推送目标。支持三种调用方式：
+发送接口：`POST`（任意路径，常用 `/`），Worker 使用环境变量中的 `WEBHOOK_URL` 或 `QYWX_ROBOT_KEY` 作为唯一推送目标。支持三种调用方式：
 - 纯文本：默认按 `text`；若需 Markdown，URL 加 `?type=markdown`（已有 query 用 `&type=markdown`）
 - JSON：`{ "type": "...", ... }`
 - multipart：字段 `file` 或 `media`；可选 `type=image` 走图片通道，否则走文件通道
