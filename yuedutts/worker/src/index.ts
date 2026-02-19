@@ -38,6 +38,7 @@ type EndpointToken = {
 };
 
 const ENGINE_EDGE = "edge";
+const APP_VERSION = "2026-02-19-routefix2";
 const DEFAULT_EDGE_VOICE = "zh-CN-YunxiNeural";
 const DEFAULT_STYLE = "general";
 
@@ -672,7 +673,7 @@ export default {
 
     const url = new URL(request.url);
     const accept = request.headers.get("accept") || "";
-    const wantsHtml = request.method === "GET" && url.search === "" && accept.includes("text/html");
+    const wantsHtml = request.method === "GET" && accept.includes("text/html");
     if (wantsHtml && (url.pathname === "/" || url.pathname.endsWith("/") || url.pathname.endsWith("/index.html"))) {
       return serveSharedIndex(request, env);
     }
@@ -684,7 +685,7 @@ export default {
       }
 
       if (path === "/healthz") {
-        return json({ ok: true });
+        return json({ ok: true, version: APP_VERSION, path });
       }
 
       if (path === "/engines") {
@@ -747,6 +748,13 @@ export default {
       if (path === "/tts") {
         if (request.method !== "GET" && request.method !== "POST") {
           throw new HttpError(405, "Method not allowed");
+        }
+        if (request.method === "GET") {
+          const q = url.searchParams;
+          const hasText = !!(q.get("speakText") || q.get("text"));
+          if (!hasText && wantsHtml) {
+            return serveSharedIndex(request, env);
+          }
         }
 
         if (runtimeStats.inFlight >= cfg.edgeMaxConcurrency) {
