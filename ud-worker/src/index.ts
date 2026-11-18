@@ -23,6 +23,10 @@ type TokenMeta = {
   expiresAt: number;       // epoch seconds (0 means never)
   status: "reserved" | "ready" | "claimed";
   uploaderIp: string;
+  // 已成功传完的字节区间（闭区间，已合并排序），用于"完整下载才失效"
+  ranges?: [number, number][];
+  // 是否为三位数字短码
+  short?: boolean;
 };
 
 type StateData = {
@@ -37,6 +41,10 @@ type StateData = {
   metrics: {
     hcCount: number;
   };
+  // 短码猜错的计数：ip -> { n: 次数, t: 窗口起点 }
+  shortFail?: Record<string, { n: number; t: number }>;
+  // R2 用量缓存（避免每次 /hc 都全量 list）
+  r2Cache?: { objects: number; bytes: number; at: number };
 };
 
 const DEFAULTS = {
@@ -45,6 +53,16 @@ const DEFAULTS = {
   MAX_PENDING: 10,
   TTL_SEC: 24 * 3600,
 };
+
+// 三位数字短码相关
+const SHORT_CODE_MAX = 1000;          // 000-999
+const SHORT_FAIL_WINDOW = 60;         // 统计窗口（秒）
+const SHORT_FAIL_LIMIT = 20;          // 窗口内猜错上限
+const SHORT_FAIL_GC = 600;            // 失败记录保留多久（秒）
+const SHORT_FAIL_MAX_ENTRIES = 500;   // 失败记录最多存多少条（防 DO 状态膨胀）
+
+// /hc 里 R2 用量的缓存时间（秒）
+const R2_CACHE_SEC = 60;
 
 function nowSec(): number {
   return Math.floor(Date.now() / 1000);
@@ -61,6 +79,26 @@ function isBrowser(req: Request): boolean {
   if (fmt === "text" || fmt === "plain") return false;
   if (fmt === "html") return true;
   return accept.includes("text/html") && !ua.includes("curl") && !ua.includes("wget") && !ua.includes("httpie");
+}
+
+// 链接预览/爬虫类 UA：抓 OG 卡片用，不能让它把文件"下载"掉
+// 注意：故意不含 MicroMessenger —— 那是微信内置浏览器，是真实用户
+function isPreviewBot(req: Request): boolean {
+  const ua = (req.headers.get("User-Agent") || "").toLowerCase();
+  return /telegrambot|whatsapp|facebookexternalhit|slackbot|discordbot|twitterbot|linkedinbot|embedly|pinterest|skypeuripreview|vkshare|quora link preview|googlebot|bingbot|baiduspider|yandexbot|bytespider|duckduckbot|applebot/.test(
+    ua,
+  );
+}
+
+// 浏览器预取/预渲染提示
+function isPrefetch(req: Request): boolean {
+  const p = (
+    req.headers.get("Sec-Purpose") ||
+    req.headers.get("X-Purpose") ||
+    req.headers.get("Purpose") ||
+    ""
+  ).toLowerCase();
+  return p.includes("prefetch") || p.includes("preview") || p.includes("prerender");
 }
 
 function basePath(env: Env): string {
@@ -83,6 +121,12 @@ function withBase(path: string, env: Env): string {
   if (!bp) return path;
   if (path === "/") return bp;
   return bp + path;
+}
+
+// 下载路径：短码走 /s/<code>，否则 /ud/f/<token>/<filename>
+function downloadPath(token: string, filename: string, env: Env): string {
+  if (isShortCode(token)) return withBase(`/s/${token}`, env);
+  return withBase(`/ud/f/${encodeURIComponent(token)}/${encodeURIComponent(filename)}`, env);
 }
 
 function getClientIp(req: Request): string {
@@ -214,6 +258,45 @@ function newToken(): string {
   return b64url(bytes);
 }
 
+// 三位数字短码：000-999
+function newShortCode(): string {
+  const n = crypto.getRandomValues(new Uint32Array(1))[0] % SHORT_CODE_MAX;
+  return String(n).padStart(3, "0");
+}
+
+function isShortCode(s: string): boolean {
+  return /^\d{3}$/.test(s);
+}
+
+// 把新区间并入已有序区间列表（相邻/重叠合并），返回新的列表
+function mergeRange(list: [number, number][], start: number, end: number): [number, number][] {
+  const all = [...list, [start, end] as [number, number]]
+    .filter(([s, e]) => Number.isFinite(s) && Number.isFinite(e) && e >= s)
+    .sort((a, b) => a[0] - b[0]);
+  const out: [number, number][] = [];
+  for (const [s, e] of all) {
+    const last = out[out.length - 1];
+    if (last && s <= last[1] + 1) {
+      last[1] = Math.max(last[1], e);
+    } else {
+      out.push([s, e]);
+    }
+  }
+  return out;
+}
+
+// 区间是否完整覆盖 [0, size)
+function rangesComplete(list: [number, number][], size: number): boolean {
+  if (size <= 0) return false;
+  let covered = 0;
+  for (const [s, e] of list) {
+    if (s > covered) return false; // 中间有空洞
+    covered = Math.max(covered, e + 1);
+    if (covered >= size) return true;
+  }
+  return covered >= size;
+}
+
 function contentDisposition(filename: string): string {
   // RFC 5987 filename*=UTF-8''...
   const fallback = filename
@@ -276,6 +359,8 @@ function helpText(origin: string, env: Env): string {
 - PUT  ${base}/ud                直传文件（需提供文件名，见示例）
 - POST ${base}/ud                直传文本（非 multipart；保存为 <timestamp>.txt）
 - GET  ${base}/ud/f/<token>/<filename>   一次性下载，成功后该 token 失效并删除对象
+- GET  ${base}/s/<code>          短链接下载（三位数字，需上传时勾选"短链接"）
+- GET  ${base}/hc?full=1         健康检查；加 full=1 则重新遍历 R2 统计（默认读 60s 缓存）
 
 上传示例
   ${curlMultipart}
@@ -290,7 +375,11 @@ function helpText(origin: string, env: Env): string {
 - 上传鉴权：${c.REQUIRE_KEY ? "需要 key（UD_API_KEY 已配置）" : "无需 key"}
 - 直传文件名：PUT 可用 name / filename、X-Filename 或 /ud/<filename>；缺省则随机 8 位 .bin
 - 同名覆盖：同一个文件名再次上传会覆盖并删除旧对象
-- 下载一次性：token 在 claim 成功后立即标记为已领取
+- 下载一次性：整份文件被完整传完（覆盖全部字节）后，token 立即失效并删除对象
+- 支持 Range：多线程/断点续传可用；只有"完整下载完成"才算消费，探测性请求不会失效
+- 短链接：上传时加 short=1（或页面勾选），生成 ${base}/s/<三位数字>；可枚举，勿用于敏感文件
+- 预览保护：HEAD、Range 探测、链接预览机器人（Telegram/Slack/Discord 等抓取器）、浏览器预取都不会消费链接
+- 短码防猜：同一 IP 每 ${SHORT_FAIL_WINDOW}s 猜错超过 ${SHORT_FAIL_LIMIT} 次返回 429
 
 环境变量 / Secrets
 - UD_API_KEY        可选；设置后上传需提供 key
@@ -365,6 +454,9 @@ a:hover{text-decoration:underline;}
 .row.tight{gap:8px;}
 .pill{display:inline-block;padding:2px 8px;border:1px solid var(--stroke);border-radius:999px;font-size:12px;color:#cfe0ff;background:rgba(255,255,255,.04);}
 .result{margin-top:10px;font-size:13px;word-break:break-all;}
+.check{display:flex;align-items:center;gap:8px;margin-top:12px;font-size:13px;color:#dbe6ff;cursor:pointer;user-select:none;}
+.check input[type=checkbox]{width:auto;margin:0;accent-color:#6de9c5;}
+.hint{font-size:12px;color:#8fa3c9;margin-top:2px;}
 @media (max-width:640px){.wrap{padding:26px 14px;}button{width:100%;text-align:center;}}
 </style></head><body>
 <div class="wrap"><div class="card">
@@ -376,6 +468,7 @@ a:hover{text-decoration:underline;}
   <input type="text" name="key" placeholder="填入 key（错了会在本页提示）"/>` : ""}
   <div class="field-label">选择文件</div>
   <input type="file" name="file" required/>
+  <label class="check"><input type="checkbox" name="short" value="1"/> 生成短链接（三位数字，好记但可能被猜到）</label>
   <div class="row">
     <button type="submit">立即上传</button>
     <div class="muted">最大 ${c.MAX_MB}MB；单 IP ${c.RATE_LIMIT_SEC}s 1 次；待下载最多 ${c.MAX_PENDING} 份；TTL ${c.TTL_SEC}s。</div>
@@ -388,6 +481,7 @@ a:hover{text-decoration:underline;}
   <input type="text" id="rawKey" placeholder="填入 key（错了会在本页提示）"/>` : ""}
   <div class="field-label">文本内容</div>
   <textarea id="rawText" class="textarea" placeholder="在这里输入要传的文本..."></textarea>
+  <label class="check"><input type="checkbox" id="rawShort"/> 生成短链接（三位数字）</label>
   <div class="row tight">
     <button type="button" id="rawSend">提交文本</button>
     <div class="muted">以 text/plain 直传，保存为 &lt;timestamp&gt;.txt</div>
@@ -414,6 +508,7 @@ ${curlText}</pre>
   const result = document.getElementById("rawResult");
   const textEl = document.getElementById("rawText");
   const keyEl = document.getElementById("rawKey");
+  const shortEl = document.getElementById("rawShort");
   const baseUrl = "${base}/ud";
   const setResult = (msg, ok) => {
     if (!result) return;
@@ -431,7 +526,7 @@ ${curlText}</pre>
     if (key) headers["X-API-Key"] = key;
     try {
       setResult("正在上传…", true);
-      const resp = await fetch(baseUrl, { method: "POST", headers, body: text });
+      const resp = await fetch(shortEl && shortEl.checked ? (baseUrl + "?short=1") : baseUrl, { method: "POST", headers, body: text });
       const body = await resp.text();
       if (!resp.ok) {
         setResult(body.trim() || ("上传失败，HTTP " + resp.status), false);
@@ -566,22 +661,31 @@ export default {
     if (path === "/" && request.method === "GET") return empty404();
 
     if (path === "/hc" && request.method === "GET") {
+      const full = url.searchParams.get("full") === "1";
       let hcCount = -1;
       let pendingTokens = 0;
       let pendingBytes = 0;
+      let r2Objects = -1;
+      let r2Bytes = -1;
+      let cached = false;
       try {
-        const metaResp = await callStateDO(env, { op: "hc" });
+        const metaResp = await callStateDO(env, { op: "hc", full });
         if (metaResp.ok) {
-          const meta = (await metaResp.json()) as { hcCount: number; pendingTokens: number; pendingBytes: number };
+          const meta = (await metaResp.json()) as {
+            hcCount: number;
+            pendingTokens: number;
+            pendingBytes: number;
+            r2Objects: number;
+            r2Bytes: number;
+            cached: boolean;
+          };
           hcCount = meta.hcCount ?? -1;
           pendingTokens = meta.pendingTokens ?? 0;
           pendingBytes = meta.pendingBytes ?? 0;
+          r2Objects = meta.r2Objects ?? -1;
+          r2Bytes = meta.r2Bytes ?? -1;
+          cached = !!meta.cached;
         }
-      } catch {}
-
-      let usage: { objects: number; bytes: number } | null = null;
-      try {
-        usage = await bucketUsage(env.UD_BUCKET);
       } catch {}
 
       const body = {
@@ -590,8 +694,9 @@ export default {
         hc_calls: hcCount,
         pending_tokens: pendingTokens,
         pending_bytes: pendingBytes,
-        r2_objects: usage?.objects ?? -1,
-        r2_bytes: usage?.bytes ?? -1,
+        r2_objects: r2Objects,
+        r2_bytes: r2Bytes,
+        r2_cached: cached,
       };
       if (isBrowser(request)) {
         return new Response(hcHtml(url.origin, env, body), {
@@ -662,6 +767,7 @@ export default {
         filename,
         size,
         contentType,
+        short: url.searchParams.get("short") === "1",
       });
 
       if (!reserveResp.ok) {
@@ -703,8 +809,7 @@ export default {
 
       ctx.waitUntil(callStateDO(env, { op: "commit", token }).catch(() => undefined));
 
-      const dlPath = withBase(`/ud/f/${encodeURIComponent(token)}/${encodeURIComponent(filename)}`, env);
-      const dlUrl = `${url.origin}${dlPath}`;
+      const dlUrl = `${url.origin}${downloadPath(token, filename, env)}`;
 
       if (isBrowser(request)) {
         return new Response(udHtml(url.origin, env, "上传成功！", true, dlUrl), {
@@ -763,6 +868,7 @@ export default {
         filename,
         size: f.size,
         contentType,
+        short: url.searchParams.get("short") === "1" || String(form.get("short") || "") !== "",
       });
 
       if (!reserveResp.ok) {
@@ -807,8 +913,7 @@ export default {
       // 3) commit reservation
       ctx.waitUntil(callStateDO(env, { op: "commit", token }).catch(() => undefined));
 
-      const dlPath = withBase(`/ud/f/${encodeURIComponent(token)}/${encodeURIComponent(filename)}`, env);
-      const dlUrl = `${url.origin}${dlPath}`;
+      const dlUrl = `${url.origin}${downloadPath(token, filename, env)}`;
 
       if (isBrowser(request)) {
         return new Response(udHtml(url.origin, env, "上传成功！", true, dlUrl), {
@@ -819,57 +924,132 @@ export default {
       return new Response(`OK\n${dlUrl}\n`, { status: 201, headers: { "Content-Type": "text/plain; charset=utf-8" } });
     }
 
-    // /ud/f/<token>/<filename>
-    if (path.startsWith("/ud/f/") && request.method === "GET") {
-      // path: /ud/f/<token>/<filename...>
-      const parts = path.split("/").filter(Boolean); // ["ud","f",token,filename...]
-      if (parts.length < 4) return empty404();
+    // 下载：/ud/f/<token>/<filename> 或 /s/<code>
+    const isLongDl = path.startsWith("/ud/f/");
+    const isShortDl = path.startsWith("/s/");
+    if ((isLongDl || isShortDl) && (request.method === "GET" || request.method === "HEAD")) {
       let token = "";
-      let rawName = "";
-      try {
-        token = decodeURIComponent(parts[2] || "");
-        rawName = decodeURIComponent(parts.slice(3).join("/")); // should not contain "/" normally
-      } catch {
-        return empty404();
+      let reqName = "";
+      if (isLongDl) {
+        const parts = path.split("/").filter(Boolean); // ["ud","f",token,filename...]
+        if (parts.length < 4) return empty404();
+        try {
+          token = decodeURIComponent(parts[2] || "");
+          reqName = sanitizeFilename(decodeURIComponent(parts.slice(3).join("/")));
+        } catch {
+          return empty404();
+        }
+        if (!reqName) return empty404();
+      } else {
+        const parts = path.split("/").filter(Boolean); // ["s", code]
+        if (parts.length !== 2) return empty404();
+        try {
+          token = decodeURIComponent(parts[1] || "");
+        } catch {
+          return empty404();
+        }
+        if (!isShortCode(token)) return empty404();
       }
-      const filename = sanitizeFilename(rawName);
+      if (!token) return empty404();
 
-      if (!token || !filename) return empty404();
+      // 链接预览/预取：直接给个空壳页面，不碰 token，不消耗
+      if (isPreviewBot(request) || isPrefetch(request)) {
+        const ph = new Headers({ "Content-Type": "text/html; charset=utf-8" });
+        noStoreHeaders(ph);
+        return new Response("<!doctype html><html><head><meta charset=\"utf-8\"/><title>UD Relay</title></head><body></body></html>", {
+          status: 200,
+          headers: ph,
+        });
+      }
 
       const ip = getClientIp(request);
 
-      // claim once from DO (mark claimed immediately)
-      const claimResp = await callStateDO(env, { op: "claim", token, filename, ip });
-      if (!claimResp.ok) return empty404();
-      const claim = (await claimResp.json()) as { objectKey: string; filename: string; contentType: string };
+      // 读取元信息（不消费；短码猜错会在这里被限流）
+      const metaResp = await callStateDO(env, { op: "meta", token, ip, name: reqName });
+      if (metaResp.status === 429) return new Response("Too Many Requests\n", { status: 429 });
+      if (!metaResp.ok) return empty404();
+      const meta = (await metaResp.json()) as { objectKey: string; filename: string; contentType: string; size: number };
 
-      // get object
-      const obj = await env.UD_BUCKET.get(claim.objectKey);
+      const total = Number(meta.size) || 0;
+
+      // Range 解析（支持多线程/断点续传）
+      let offset = 0;
+      let length = total;
+      let status = 200;
+      const rangeHeader = request.headers.get("Range");
+      if (rangeHeader && total > 0) {
+        const m = /^bytes=(\d*)-(\d*)$/.exec(rangeHeader.trim());
+        if (m) {
+          const hasStart = m[1] !== "";
+          const hasEnd = m[2] !== "";
+          let s = hasStart ? parseInt(m[1], 10) : -1;
+          let e = hasEnd ? parseInt(m[2], 10) : -1;
+          if (!hasStart && hasEnd) {
+            s = Math.max(0, total - e);
+            e = total - 1;
+          } else if (hasStart && !hasEnd) {
+            e = total - 1;
+          }
+          if (s >= 0 && e >= s && s < total) {
+            if (e >= total) e = total - 1;
+            offset = s;
+            length = e - s + 1;
+            status = 206;
+          } else {
+            return new Response("", { status: 416, headers: { "Content-Range": `bytes */${total}` } });
+          }
+        }
+      }
+
+      const h = new Headers();
+      h.set("Content-Type", meta.contentType || "application/octet-stream");
+      h.set("Content-Disposition", contentDisposition(meta.filename));
+      h.set("Accept-Ranges", "bytes");
+      if (status === 206) h.set("Content-Range", `bytes ${offset}-${offset + length - 1}/${total}`);
+      h.set("Content-Length", String(length));
+      noStoreHeaders(h);
+
+      // HEAD：只回头，不算下载，不消费
+      if (request.method === "HEAD") {
+        return new Response(null, { status, headers: h });
+      }
+
+      const obj = await env.UD_BUCKET.get(
+        meta.objectKey,
+        status === 206 ? { range: { offset, length } } : undefined,
+      );
       if (!obj || !obj.body) {
-        // finalize anyway (token already claimed) to avoid dangling meta
         ctx.waitUntil(callStateDO(env, { op: "finalize", token }).catch(() => undefined));
         return empty404();
       }
 
-      // build response headers
-      const h = new Headers();
-      h.set("Content-Type", claim.contentType || "application/octet-stream");
-      h.set("Content-Disposition", contentDisposition(claim.filename));
-      noStoreHeaders(h);
-
-      // stream response; after response completes, delete object + finalize meta
+      // 数据真正传完之后才上报"这一段传完了"；断开/取消则不上报
+      const { readable, writable } = new TransformStream();
+      const pump = obj.body.pipeTo(writable);
       ctx.waitUntil(
-        (async () => {
-          try {
-            await env.UD_BUCKET.delete(claim.objectKey);
-          } catch {}
-          try {
-            await callStateDO(env, { op: "finalize", token });
-          } catch {}
-        })()
+        pump
+          .then(async () => {
+            try {
+              const r = await callStateDO(env, {
+                op: "report",
+                token,
+                start: offset,
+                end: offset + length - 1,
+              });
+              if (r.ok) {
+                const j = (await r.json()) as { complete?: boolean };
+                if (j.complete) {
+                  try {
+                    await env.UD_BUCKET.delete(meta.objectKey);
+                  } catch {}
+                }
+              }
+            } catch {}
+          })
+          .catch(() => undefined),
       );
 
-      return new Response(obj.body, { status: 200, headers: h });
+      return new Response(readable, { status, headers: h });
     }
 
     // everything else
@@ -957,6 +1137,18 @@ export class UDState implements DurableObject {
       if (ts < cutoff) delete data.lastUpload[ip];
     }
 
+    // 短码失败记录 GC（过期 + 控制条数，防止 DO 状态膨胀）
+    if (data.shortFail) {
+      for (const [ip, rec] of Object.entries(data.shortFail)) {
+        if (t - rec.t > SHORT_FAIL_GC) delete data.shortFail[ip];
+      }
+      const keys = Object.keys(data.shortFail);
+      if (keys.length > SHORT_FAIL_MAX_ENTRIES) {
+        keys.sort((a, b) => (data.shortFail![a]?.t || 0) - (data.shortFail![b]?.t || 0));
+        for (const k of keys.slice(0, keys.length - SHORT_FAIL_MAX_ENTRIES)) delete data.shortFail![k];
+      }
+    }
+
     return { evicted };
   }
 
@@ -986,11 +1178,28 @@ export class UDState implements DurableObject {
         data.metrics.hcCount = (data.metrics.hcCount || 0) + 1;
         const pending = Object.values(data.tokens).filter((m) => m.status !== "claimed");
         const pendingBytes = pending.reduce((sum, m) => sum + (m.size || 0), 0);
+
+        // R2 用量：默认读缓存，?full=1 才重新遍历
+        const wantFull = !!body?.full;
+        let r2 = data.r2Cache;
+        if (wantFull || !r2 || nowSec() - r2.at > R2_CACHE_SEC) {
+          try {
+            const usage = await bucketUsage(this.env.UD_BUCKET);
+            r2 = { objects: usage.objects, bytes: usage.bytes, at: nowSec() };
+            data.r2Cache = r2;
+          } catch {
+            r2 = r2 || { objects: -1, bytes: -1, at: 0 };
+          }
+        }
+
         await this.save(data);
         return Response.json({
           hcCount: data.metrics.hcCount,
           pendingTokens: pending.length,
           pendingBytes,
+          r2Objects: r2?.objects ?? -1,
+          r2Bytes: r2?.bytes ?? -1,
+          cached: !wantFull && !!r2 && nowSec() - r2.at <= R2_CACHE_SEC,
         });
       }
 
@@ -1008,7 +1217,20 @@ export class UDState implements DurableObject {
         const safeName = sanitizeFilename(String(filename || ""));
         if (!safeName) return new Response("", { status: 404 });
 
-        const token = newToken();
+        // 短码：勾选 short 时用三位数字，冲突自动重试；都撞车则退回长 token
+        let token = "";
+        let short = false;
+        if (body?.short) {
+          for (let i = 0; i < 30; i++) {
+            const code = newShortCode();
+            if (!data.tokens[code]) {
+              token = code;
+              short = true;
+              break;
+            }
+          }
+        }
+        if (!token) token = newToken();
         const ext = (() => {
           const idx = safeName.lastIndexOf(".");
           return idx >= 0 ? safeName.slice(idx) : "";
@@ -1037,6 +1259,8 @@ export class UDState implements DurableObject {
           expiresAt,
           status: "reserved",
           uploaderIp: String(ip || "unknown"),
+          ranges: [],
+          short,
         };
         data.byName[safeName] = token;
         data.queue.push(token);
@@ -1075,17 +1299,39 @@ export class UDState implements DurableObject {
         return Response.json({ ok: true });
       }
 
-      if (op === "claim") {
+      // 读取元信息：不消费；短码猜错在这里限流
+      if (op === "meta") {
         const token = String(body?.token || "");
-        const filename = sanitizeFilename(String(body?.filename || ""));
-        const meta = data.tokens[token];
-        if (!meta) return new Response("", { status: 404 });
-        if (meta.status !== "ready") return new Response("", { status: 404 });
-        if (meta.filename !== filename) return new Response("", { status: 404 });
-
+        const ip = String(body?.ip || "unknown");
+        const reqName = sanitizeFilename(String(body?.name || ""));
         const t = nowSec();
+        const meta = data.tokens[token];
+
+        if (!meta) {
+          if (isShortCode(token)) {
+            data.shortFail = data.shortFail || {};
+            const rec = data.shortFail[ip] || { n: 0, t };
+            if (t - rec.t > SHORT_FAIL_WINDOW) {
+              rec.n = 0;
+              rec.t = t;
+            }
+            rec.n += 1;
+            data.shortFail[ip] = rec;
+            await this.save(data);
+            if (rec.n > SHORT_FAIL_LIMIT) return new Response("Too Many Requests", { status: 429 });
+          }
+          return new Response("", { status: 404 });
+        }
+
+        // 猜对了：清掉这个 IP 的失败计数
+        if (data.shortFail && data.shortFail[ip]) {
+          delete data.shortFail[ip];
+          await this.save(data);
+        }
+
+        if (meta.status !== "ready") return new Response("", { status: 404 });
+
         if (meta.expiresAt > 0 && meta.expiresAt < t) {
-          // expired
           delete data.tokens[token];
           if (data.byName[meta.filename] === token) delete data.byName[meta.filename];
           data.queue = data.queue.filter((x) => x !== token);
@@ -1094,16 +1340,62 @@ export class UDState implements DurableObject {
           return new Response("", { status: 404 });
         }
 
-        // mark claimed immediately => one-time
-        meta.status = "claimed";
-        data.tokens[token] = meta;
-        await this.save(data);
+        if (reqName && meta.filename !== reqName) return new Response("", { status: 404 });
 
         return Response.json({
           objectKey: meta.objectKey,
           filename: meta.filename,
           contentType: meta.contentType || "application/octet-stream",
+          size: meta.size || 0,
         });
+      }
+
+      // 上报"这一段字节已经完整传给客户端了"；覆盖 [0,size) 则消费掉
+      if (op === "report") {
+        const token = String(body?.token || "");
+        const t = nowSec();
+        const meta = data.tokens[token];
+        if (!meta || meta.status !== "ready") return Response.json({ complete: false });
+
+        if (meta.expiresAt > 0 && meta.expiresAt < t) {
+          delete data.tokens[token];
+          if (data.byName[meta.filename] === token) delete data.byName[meta.filename];
+          data.queue = data.queue.filter((x) => x !== token);
+          deleteKeys.push(meta.objectKey);
+          await this.save(data);
+          return Response.json({ complete: false });
+        }
+
+        const size = Number(meta.size) || 0;
+
+        if (size <= 0) {
+          // 空文件：一次成功传输就算消费
+          delete data.tokens[token];
+          if (data.byName[meta.filename] === token) delete data.byName[meta.filename];
+          data.queue = data.queue.filter((x) => x !== token);
+          deleteKeys.push(meta.objectKey);
+          await this.save(data);
+          return Response.json({ complete: true });
+        }
+
+        const start = Math.max(0, Math.floor(Number(body?.start) || 0));
+        const end = Math.floor(Number(body?.end));
+        if (!Number.isFinite(end) || end < start) return Response.json({ complete: false });
+
+        meta.ranges = mergeRange(meta.ranges || [], start, Math.min(end, size - 1));
+
+        if (rangesComplete(meta.ranges, size)) {
+          delete data.tokens[token];
+          if (data.byName[meta.filename] === token) delete data.byName[meta.filename];
+          data.queue = data.queue.filter((x) => x !== token);
+          deleteKeys.push(meta.objectKey);
+          await this.save(data);
+          return Response.json({ complete: true });
+        }
+
+        data.tokens[token] = meta;
+        await this.save(data);
+        return Response.json({ complete: false, segments: meta.ranges.length });
       }
 
       if (op === "finalize") {
