@@ -391,188 +391,488 @@ function helpText(origin: string, env: Env): string {
 `;
 }
 
+// ============================================================================
+// ============================================================================
+// 前端页面：共用样式 + 三个页面（上传 / 帮助 / 健康检查）
+// 设计要点：移动优先、亮暗色自适应、分区卡片、一键复制、拖拽上传、上传进度
+// ============================================================================
+
+function baseCss(): string {
+  return `
+:root{
+  --bg:#f5f7fb;--bg2:#eef1f8;--card:#ffffff;--line:rgba(15,23,42,.09);
+  --fg:#0f172a;--muted:#5b6b85;--accent:#2563eb;--accent2:#0d9488;
+  --ok:#0f9d58;--okbg:rgba(15,157,88,.09);--err:#dc2626;--errbg:rgba(220,38,38,.08);
+  --shadow:0 10px 30px rgba(15,23,42,.07);--shadow2:0 2px 8px rgba(15,23,42,.05);
+  --r:16px;
+}
+@media (prefers-color-scheme:dark){
+  :root{
+    --bg:#0a1120;--bg2:#0f1728;--card:rgba(20,28,45,.82);--line:rgba(255,255,255,.10);
+    --fg:#e9eefb;--muted:#95a6c4;--accent:#5b9dff;--accent2:#2dd4bf;
+    --ok:#34d399;--okbg:rgba(52,211,153,.10);--err:#f87171;--errbg:rgba(248,113,113,.10);
+    --shadow:0 12px 40px rgba(0,0,0,.45);--shadow2:0 2px 10px rgba(0,0,0,.3);
+  }
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+[hidden]{display:none!important}
+html,body{margin:0;padding:0}
+body{
+  min-height:100dvh;color:var(--fg);
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,sans-serif;
+  font-size:15px;line-height:1.6;
+  background:
+    radial-gradient(1000px 500px at 12% -10%,rgba(37,99,235,.10),transparent 60%),
+    radial-gradient(900px 500px at 95% 0%,rgba(13,148,136,.09),transparent 55%),
+    var(--bg);
+  background-attachment:fixed;
+}
+.wrap{max-width:980px;margin:0 auto;padding:clamp(16px,4vw,36px) clamp(14px,3.2vw,24px) 56px}
+
+/* 顶部 */
+.top{display:flex;flex-direction:column;gap:12px;margin-bottom:20px}
+@media(min-width:720px){.top{flex-direction:row;align-items:center;justify-content:space-between}}
+.brand{display:flex;align-items:center;gap:12px}
+.logo{width:42px;height:42px;border-radius:12px;flex:0 0 auto;display:grid;place-items:center;
+  background:linear-gradient(135deg,var(--accent),var(--accent2));box-shadow:0 6px 18px rgba(37,99,235,.28)}
+.logo svg{width:22px;height:22px;display:block}
+h1{margin:0;font-size:20px;font-weight:800;letter-spacing:.2px}
+.sub{margin:2px 0 0;font-size:13px;color:var(--muted)}
+.badges{display:flex;flex-wrap:wrap;gap:6px}
+.badge{font-size:12px;padding:4px 10px;border-radius:999px;border:1px solid var(--line);
+  background:var(--card);color:var(--muted);white-space:nowrap;box-shadow:var(--shadow2)}
+.badge.warn{color:#b45309;border-color:rgba(180,83,9,.35);background:rgba(245,158,11,.10)}
+@media (prefers-color-scheme:dark){.badge.warn{color:#fbbf24;border-color:rgba(251,191,36,.3)}}
+
+/* 结果提示 */
+.result{margin:0 0 18px;padding:16px;border-radius:var(--r);border:1px solid var(--line);
+  background:var(--card);box-shadow:var(--shadow);animation:pop .22s ease}
+.result.ok{border-color:rgba(15,157,88,.35);background:linear-gradient(180deg,var(--okbg),transparent)}
+.result.err{border-color:rgba(220,38,38,.35);background:linear-gradient(180deg,var(--errbg),transparent)}
+.result-title{font-weight:800;font-size:15px;margin-bottom:2px;display:flex;align-items:center;gap:8px}
+.result-title .ico{display:inline-grid;place-items:center;width:18px;height:18px;border-radius:50%;
+  font-size:11px;font-weight:800;color:#fff;flex:0 0 auto;line-height:1}
+.result.ok .result-title .ico{background:var(--ok)}
+.result.err .result-title .ico{background:var(--err)}
+.result.ok .result-title{color:var(--ok)}
+.result.err .result-title{color:var(--err)}
+.result .hint{font-size:12.5px;color:var(--muted)}
+@keyframes pop{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
+
+/* 卡片 */
+.grid{display:grid;gap:16px}
+@media(min-width:860px){.grid{grid-template-columns:1fr 1fr;align-items:start}}
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);
+  padding:18px;box-shadow:var(--shadow);backdrop-filter:blur(8px)}
+.card h2{margin:0 0 4px;font-size:15px;font-weight:800;display:flex;align-items:center;gap:8px}
+.card h2 .dot{width:8px;height:8px;border-radius:50%;background:var(--accent);flex:0 0 auto}
+.card .desc{margin:0 0 14px;font-size:12.5px;color:var(--muted)}
+
+/* 拖拽区 */
+.drop{position:relative;display:block;border:2px dashed var(--line);border-radius:14px;
+  padding:26px 14px;text-align:center;cursor:pointer;transition:border-color .18s,background .18s,transform .18s;
+  background:var(--bg2)}
+.drop:hover{border-color:var(--accent)}
+.drop.over{border-color:var(--accent);background:rgba(37,99,235,.07);transform:scale(.995)}
+.drop input[type=file]{position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer}
+.drop .ico{width:38px;height:38px;margin:0 auto 8px;color:var(--accent);opacity:.9}
+.drop .main{font-weight:700;font-size:14px}
+.drop .tip{font-size:12px;color:var(--muted);margin-top:2px}
+@media(max-width:520px){.drop{padding:20px 12px}.drop .ico{width:32px;height:32px;margin-bottom:6px}}
+.fileinfo{display:flex;align-items:center;gap:10px;margin-top:12px;padding:10px 12px;border-radius:12px;
+  background:var(--bg2);border:1px solid var(--line);font-size:13px}
+.fileinfo .name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}
+.fileinfo .size{color:var(--muted);flex:0 0 auto}
+
+/* 表单元素 */
+.check{display:flex;align-items:center;gap:9px;margin:14px 0 0;font-size:13.5px;cursor:pointer;user-select:none;color:var(--fg)}
+.check input{width:18px;height:18px;margin:0;accent-color:var(--accent);flex:0 0 auto}
+.field{margin-top:12px}
+.field label{display:block;font-size:12.5px;color:var(--muted);margin-bottom:6px}
+input[type=text],textarea{width:100%;font:inherit;color:var(--fg);background:var(--bg2);
+  border:1px solid var(--line);border-radius:12px;padding:11px 13px;outline:none;transition:border-color .15s,box-shadow .15s}
+input[type=text]:focus,textarea:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(37,99,235,.14)}
+textarea{min-height:132px;resize:vertical;line-height:1.55}
+
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;width:100%;
+  font:inherit;font-weight:700;font-size:15px;padding:13px 18px;border-radius:12px;border:0;
+  cursor:pointer;transition:transform .12s,box-shadow .2s,opacity .2s;margin-top:14px}
+.btn.primary{color:#fff;background:linear-gradient(135deg,var(--accent),var(--accent2));
+  box-shadow:0 8px 22px rgba(37,99,235,.26)}
+.btn.primary:hover{transform:translateY(-1px)}
+.btn.ghost{background:var(--bg2);color:var(--fg);border:1px solid var(--line)}
+.btn:disabled{opacity:.45;cursor:not-allowed;transform:none;box-shadow:none}
+.btn.small{width:auto;margin:0;padding:10px 14px;font-size:13.5px;border-radius:10px}
+
+/* 进度条 */
+.prog{margin-top:12px;height:8px;border-radius:999px;background:var(--bg2);overflow:hidden;border:1px solid var(--line)}
+.prog .bar{height:100%;width:0%;border-radius:999px;background:linear-gradient(90deg,var(--accent),var(--accent2));
+  transition:width .18s ease}
+.prog-text{font-size:12px;color:var(--muted);margin-top:6px;text-align:center}
+
+/* 链接行 */
+.linkrow{display:flex;gap:8px;margin-top:10px}
+.linkrow input{flex:1;min-width:0;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:13px}
+.copybtn{flex:0 0 auto;width:auto;margin:0;padding:0 16px;font-size:14px;font-weight:700;border-radius:12px;
+  border:1px solid var(--line);background:var(--bg2);color:var(--fg);cursor:pointer;transition:.15s;white-space:nowrap}
+.copybtn:hover{border-color:var(--accent);color:var(--accent)}
+.copybtn.done{background:var(--okbg);color:var(--ok);border-color:rgba(15,157,88,.4)}
+
+/* 页脚 */
+footer{margin-top:26px;padding-top:16px;border-top:1px solid var(--line);
+  display:flex;flex-wrap:wrap;gap:14px;font-size:13px;color:var(--muted)}
+footer a{color:var(--accent);text-decoration:none}
+footer a:hover{text-decoration:underline}
+
+/* 统计格子 */
+.tiles{display:grid;gap:12px;margin-top:16px}
+@media(min-width:640px){.tiles{grid-template-columns:repeat(2,1fr)}}
+.tile{border:1px solid var(--line);border-radius:14px;padding:14px;background:var(--bg2)}
+.tile h3{margin:0 0 4px;font-size:12.5px;font-weight:600;color:var(--muted)}
+.tile .val{font-size:22px;font-weight:800;letter-spacing:.3px}
+.tile .note{font-size:12px;color:var(--muted);margin-top:2px}
+pre.code{margin:14px 0 0;padding:14px;border-radius:12px;background:var(--bg2);border:1px solid var(--line);
+  overflow:auto;font-size:12.5px;line-height:1.6;white-space:pre-wrap;word-break:break-word;
+  font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+`;
+}
+
+function pageShell(title: string, body: string): string {
+  return `<!doctype html>
+<html lang="zh-CN"><head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
+<meta name="color-scheme" content="light dark"/>
+<meta name="theme-color" media="(prefers-color-scheme:light)" content="#f5f7fb"/>
+<meta name="theme-color" media="(prefers-color-scheme:dark)" content="#0a1120"/>
+<meta name="robots" content="noindex,nofollow"/>
+<title>${escapeHtml(title)}</title>
+<style>${baseCss()}</style>
+</head><body>
+${body}
+</body></html>`;
+}
+
+function logoMark(): string {
+  return `<div class="logo"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg></div>`;
+}
+
+function resultBlock(message: string, ok: boolean, link: string): string {
+  if (!message) return "";
+  const linkHtml = link
+    ? `<div class="linkrow">
+        <input type="text" readonly value="${escapeHtml(link)}" onclick="this.select()"/>
+        <button type="button" class="copybtn" data-copy="${escapeHtml(link)}">复制</button>
+      </div>
+      <div class="hint" style="margin-top:8px">下载一次后失效；支持多线程 / 断点续传，中途断开不算消耗。</div>`
+    : "";
+  return `<div id="result" class="result ${ok ? "ok" : "err"}">
+    <div class="result-title"><span class="ico">${ok ? "✓" : "!"}</span><span class="txt">${escapeHtml(message)}</span></div>
+    ${linkHtml}
+  </div>`;
+}
+
 function udHtml(origin: string, env: Env, message = "", ok = true, link = ""): string {
   const c = cfg(env);
   const bp = basePath(env);
   const base = origin + (bp || "");
   const needKey = c.REQUIRE_KEY;
-  const color = ok ? "#42f7bf" : "#ff7b7b";
-  const msgBlock = message
-    ? `<div class="alert ${ok ? "ok" : "err"}">
-        <div class="alert-title">${escapeHtml(message)}</div>
-        ${
-          link
-            ? `<div class="muted">下载链接（一次性；wget 不加参数也会落地成原文件名）：</div>
-               <div class="link-row"><a href="${link}">${link}</a></div>`
-            : ""
-        }
-      </div>`
+
+  const keyField = needKey
+    ? `<div class="field"><label for="keyInput">Key（必填）</label>
+       <input id="keyInput" type="text" name="key" autocomplete="off" placeholder="填写上传密钥"/></div>`
     : "";
 
-  const keyParam = needKey ? `&key=YOUR_KEY` : "";
-  const keyOnly = needKey ? `?key=YOUR_KEY` : "";
-  const curlMultipart = needKey
-    ? `curl -sS -F "file=@/path/to/file" "${base}/ud?key=YOUR_KEY"`
-    : `curl -sS -F "file=@/path/to/file" "${base}/ud"`;
-  const curlPut = `curl -sS -T "/path/to/file" "${base}/ud?name=yourfile.ext${keyParam}"   # 不指定 name 则保存为随机 8 位 .bin`;
-  const curlText = `curl -sS -d "hello" "${base}/ud${keyOnly}"   # 保存为 <timestamp>.txt`;
+  const body = `<div class="wrap">
+  <header class="top">
+    <div class="brand">
+      ${logoMark()}
+      <div>
+        <h1>UD Relay</h1>
+        <p class="sub">一次性文件中转 · 完整下载一次后失效</p>
+      </div>
+    </div>
+    <div class="badges">
+      <span class="badge ${needKey ? "warn" : ""}">${needKey ? "需要 Key" : "无需 Key"}</span>
+      <span class="badge">最大 ${c.MAX_MB}MB</span>
+      <span class="badge">TTL ${Math.round(c.TTL_SEC / 3600)}h</span>
+      <span class="badge">限速 ${c.RATE_LIMIT_SEC}s/次</span>
+    </div>
+  </header>
 
-  return `<!doctype html>
-<html lang="zh-CN"><head>
-<meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>UD Relay</title>
-<style>
-:root{--bg:#0c1224;--card:rgba(14,19,33,.85);--stroke:rgba(255,255,255,.08);--muted:#b9c7e3;--accent:#6de9c5;--accent2:#7db2ff}
-*{box-sizing:border-box}
-body{margin:0;min-height:100vh;font-family:"Space Grotesk","IBM Plex Sans","PingFang SC","Microsoft YaHei",system-ui,sans-serif;background:
-radial-gradient(circle at 10% 20%,rgba(93,173,255,.2),transparent 25%),
-radial-gradient(circle at 80% 0%,rgba(86,255,189,.18),transparent 25%),
-radial-gradient(circle at 50% 80%,rgba(133,99,255,.12),transparent 30%),
-linear-gradient(135deg,#0b1220 0%,#0f1a33 100%);color:#eaf0ff;}
-.wrap{max-width:940px;margin:0 auto;padding:40px 18px;}
-.card{background:var(--card);border:1px solid var(--stroke);border-radius:18px;padding:22px 20px;box-shadow:0 18px 50px rgba(0,0,0,.35);backdrop-filter:blur(8px);}
-.title{font-size:22px;font-weight:800;letter-spacing:0.2px;margin:0 0 6px;}
-.muted{color:var(--muted);font-size:13px;line-height:1.6;}
-.row{display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-top:10px;}
-.field-label{margin:12px 0 6px;font-weight:700;font-size:13px;color:#dbe6ff;}
-input[type=file],input[type=text]{width:100%;padding:12px;border-radius:12px;border:1px solid var(--stroke);background:rgba(255,255,255,.04);color:#eaf0ff;outline:none;}
-input[type=text]:focus,input[type=file]:focus{border-color:var(--accent2);box-shadow:0 0 0 3px rgba(125,178,255,.18);}
-button{padding:12px 18px;border-radius:12px;border:0;cursor:pointer;font-weight:800;background:linear-gradient(135deg,var(--accent),#50c7ff);color:#061123;transition:transform .1s ease,box-shadow .2s ease;}
-button:hover{transform:translateY(-1px);box-shadow:0 10px 30px rgba(80,199,255,.3);}
-.alert{margin-top:16px;padding:14px;border-radius:14px;border:1px solid var(--stroke);background:rgba(0,0,0,.25);}
-.alert.ok{border-color:rgba(110,233,197,.55);box-shadow:0 0 0 1px rgba(110,233,197,.2);}
-.alert.err{border-color:rgba(255,123,123,.55);box-shadow:0 0 0 1px rgba(255,123,123,.15);}
-.alert-title{color:${color};font-weight:800;margin-bottom:6px;}
-.link-row{margin-top:6px;word-break:break-all;font-size:13px;}
-a{color:var(--accent2);text-decoration:none;}
-a:hover{text-decoration:underline;}
-.code{background:rgba(0,0,0,.35);padding:14px;border-radius:12px;overflow:auto;border:1px solid var(--stroke);color:#d9e7ff;}
-.section{margin-top:18px;}
-.section-title{font-weight:700;font-size:14px;color:#dbe6ff;margin-bottom:6px;}
-.textarea{width:100%;min-height:140px;resize:vertical;padding:12px;border-radius:12px;border:1px solid var(--stroke);background:rgba(255,255,255,.04);color:#eaf0ff;outline:none;}
-.textarea:focus{border-color:var(--accent2);box-shadow:0 0 0 3px rgba(125,178,255,.18);}
-.row.tight{gap:8px;}
-.pill{display:inline-block;padding:2px 8px;border:1px solid var(--stroke);border-radius:999px;font-size:12px;color:#cfe0ff;background:rgba(255,255,255,.04);}
-.result{margin-top:10px;font-size:13px;word-break:break-all;}
-.check{display:flex;align-items:center;gap:8px;margin-top:12px;font-size:13px;color:#dbe6ff;cursor:pointer;user-select:none;}
-.check input[type=checkbox]{width:auto;margin:0;accent-color:#6de9c5;}
-.hint{font-size:12px;color:#8fa3c9;margin-top:2px;}
-@media (max-width:640px){.wrap{padding:26px 14px;}button{width:100%;text-align:center;}}
-</style></head><body>
-<div class="wrap"><div class="card">
-<div class="title">UD Relay 上传 ${needKey ? "（需要 key）" : "（无需 key）"}</div>
-<div class="muted">仅开放 /hc /hp /ud（其余均为空 404）。本页提交文件后返回一次性下载链接，成功下载后立即失效。</div>
+  ${resultBlock(message, ok, link)}
 
-<form action="${base}/ud" method="post" enctype="multipart/form-data" style="margin-top:16px;">
-  ${needKey ? `<div class="field-label">Key</div>
-  <input type="text" name="key" placeholder="填入 key（错了会在本页提示）"/>` : ""}
-  <div class="field-label">选择文件</div>
-  <input type="file" name="file" required/>
-  <label class="check"><input type="checkbox" name="short" value="1"/> 生成短链接（三位数字，好记但可能被猜到）</label>
-  <div class="row">
-    <button type="submit">立即上传</button>
-    <div class="muted">最大 ${c.MAX_MB}MB；单 IP ${c.RATE_LIMIT_SEC}s 1 次；待下载最多 ${c.MAX_PENDING} 份；TTL ${c.TTL_SEC}s。</div>
-  </div>
-</form>
+  <main class="grid">
+    <section class="card">
+      <h2><span class="dot"></span>上传文件</h2>
+      <p class="desc">点击选择，或把文件拖到这里</p>
+      <form id="upForm" action="${base}/ud" method="post" enctype="multipart/form-data">
+        <label class="drop" id="drop">
+          <input type="file" name="file" id="fileInput" required/>
+          <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 9l5-5 5 5"/><path d="M12 4v12"/></svg>
+          <div class="main">选择文件</div>
+          <div class="tip">单个文件 · 不超过 ${c.MAX_MB}MB</div>
+        </label>
+        <div class="fileinfo" id="fileInfo" hidden>
+          <span class="name" id="fileName"></span>
+          <span class="size" id="fileSize"></span>
+        </div>
+        ${keyField}
+        <label class="check"><input type="checkbox" name="short" value="1" id="shortFile"/>生成短链接（三位数字，好记但可能被猜到）</label>
+        <button class="btn primary" type="submit" id="btnUpload">开始上传</button>
+        <div class="prog" id="prog" hidden><div class="bar" id="progBar"></div></div>
+        <div class="prog-text" id="progText" hidden></div>
+      </form>
+    </section>
 
-<div class="section">
-  <div class="section-title">直接发送文本 <span class="pill">-d</span></div>
-  ${needKey ? `<div class="field-label">Key</div>
-  <input type="text" id="rawKey" placeholder="填入 key（错了会在本页提示）"/>` : ""}
-  <div class="field-label">文本内容</div>
-  <textarea id="rawText" class="textarea" placeholder="在这里输入要传的文本..."></textarea>
-  <label class="check"><input type="checkbox" id="rawShort"/> 生成短链接（三位数字）</label>
-  <div class="row tight">
-    <button type="button" id="rawSend">提交文本</button>
-    <div class="muted">以 text/plain 直传，保存为 &lt;timestamp&gt;.txt</div>
-  </div>
-  <div id="rawResult" class="result muted"></div>
+    <section class="card">
+      <h2><span class="dot"></span>发送文本</h2>
+      <p class="desc">直接贴一段文字，保存为 txt</p>
+      <textarea id="rawText" placeholder="在这里输入要传的文本…"></textarea>
+      ${needKey ? `<div class="field"><label for="rawKey">Key（必填）</label>
+        <input id="rawKey" type="text" autocomplete="off" placeholder="填写上传密钥"/></div>` : ""}
+      <label class="check"><input type="checkbox" id="shortText"/>生成短链接（三位数字）</label>
+      <button class="btn ghost" type="button" id="btnText">发送文本</button>
+    </section>
+  </main>
+
+  <footer>
+    <a href="${base}/hp">使用说明</a>
+    <a href="${base}/hc">健康检查</a>
+    <span style="margin-left:auto">下载即失效 · 预览/预取不会消耗</span>
+  </footer>
 </div>
-
-${msgBlock}
-
-<div class="section">
-  <div class="section-title">curl 示例</div>
-  <pre class="code">${curlMultipart}
-${curlPut}
-${curlText}</pre>
-</div>
-
-<div class="muted" style="margin-top:14px;">帮助：<a href="${base}/hp">${base}/hp</a></div>
-<div class="muted">健康检查：<a href="${base}/hc">${base}/hc</a></div>
-</div></div>
 <script>
-(() => {
-  const btn = document.getElementById("rawSend");
-  if (!btn) return;
-  const result = document.getElementById("rawResult");
-  const textEl = document.getElementById("rawText");
-  const keyEl = document.getElementById("rawKey");
-  const shortEl = document.getElementById("rawShort");
-  const baseUrl = "${base}/ud";
-  const setResult = (msg, ok) => {
-    if (!result) return;
-    result.textContent = msg;
-    result.style.color = ok ? "#6de9c5" : "#ff7b7b";
-  };
-  btn.addEventListener("click", async () => {
-    const text = (textEl && textEl.value || "").trim();
-    if (!text) {
-      setResult("请输入文本内容。", false);
-      return;
-    }
-    const headers = { "Content-Type": "text/plain; charset=utf-8" };
-    const key = keyEl && keyEl.value ? keyEl.value.trim() : "";
-    if (key) headers["X-API-Key"] = key;
-    try {
-      setResult("正在上传…", true);
-      const resp = await fetch(shortEl && shortEl.checked ? (baseUrl + "?short=1") : baseUrl, { method: "POST", headers, body: text });
-      const body = await resp.text();
-      if (!resp.ok) {
-        setResult(body.trim() || ("上传失败，HTTP " + resp.status), false);
-        return;
+(function(){
+  var BASE = ${JSON.stringify(base)};
+  var NEED_KEY = ${needKey ? "true" : "false"};
+  var $ = function(id){ return document.getElementById(id); };
+  var curFile = null;
+
+  function fmt(n){
+    if(!n && n !== 0) return '';
+    if(n < 1024) return n + ' B';
+    var u = ['KB','MB','GB'], i = -1;
+    do { n = n / 1024; i++; } while(n >= 1024 && i < u.length - 1);
+    return n.toFixed(1) + ' ' + u[i];
+  }
+
+  function ensureResult(){
+    var box = $('result');
+    if(box) return box;
+    box = document.createElement('div');
+    box.id = 'result';
+    box.className = 'result ok';
+    box.innerHTML = '<div class="result-title"><span class="ico"></span><span class="txt"></span></div>';
+    var wrap = document.querySelector('.wrap');
+    var head = wrap.querySelector('header');
+    if(head && head.nextSibling) wrap.insertBefore(box, head.nextSibling);
+    else wrap.insertBefore(box, wrap.firstChild);
+    return box;
+  }
+
+  function toast(ok, title, url){
+    var box = ensureResult();
+    box.className = 'result ' + (ok ? 'ok' : 'err');
+    box.querySelector('.ico').textContent = ok ? '✓' : '!';
+    box.querySelector('.txt').textContent = title;
+    var row = box.querySelector('.linkrow');
+    if(url){
+      if(!row){
+        row = document.createElement('div');
+        row.className = 'linkrow';
+        row.innerHTML = '<input type="text" readonly onclick="this.select()"/><button type="button" class="copybtn">复制</button>';
+        box.appendChild(row);
+        var hint = document.createElement('div');
+        hint.className = 'hint';
+        hint.style.marginTop = '8px';
+        hint.textContent = '下载一次后失效；支持多线程 / 断点续传，中途断开不算消耗。';
+        box.appendChild(hint);
       }
-      const lines = body.trim().split(/\\n/);
-      const dl = lines[lines.length - 1] || body.trim();
-      setResult("上传成功！下载链接：" + dl, true);
-    } catch (e) {
-      setResult("上传失败：网络错误。", false);
-    }
+      row.querySelector('input').value = url;
+      row.querySelector('.copybtn').setAttribute('data-copy', url);
+      row.hidden = false;
+    } else if(row){ row.hidden = true; }
+    box.hidden = false;
+    box.scrollIntoView({behavior:'smooth', block:'nearest'});
+  }
+
+  function copyText(text, btn){
+    var done = function(){
+      var old = btn.textContent;
+      btn.textContent = '已复制 ✓'; btn.classList.add('done');
+      setTimeout(function(){ btn.textContent = old; btn.classList.remove('done'); }, 1500);
+    };
+    var fallback = function(){
+      var ta = document.createElement('textarea');
+      ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.appendChild(ta); ta.select();
+      try { document.execCommand('copy'); done(); } catch(e) {}
+      document.body.removeChild(ta);
+    };
+    if(navigator.clipboard && window.isSecureContext){
+      navigator.clipboard.writeText(text).then(done).catch(fallback);
+    } else { fallback(); }
+  }
+
+  document.addEventListener('click', function(e){
+    var b = e.target.closest ? e.target.closest('.copybtn') : null;
+    if(b){ copyText(b.getAttribute('data-copy') || '', b); }
   });
+
+  function setProg(pct, text){
+    var p = $('prog'), bar = $('progBar'), t = $('progText');
+    if(pct === null){ p.hidden = true; t.hidden = true; return; }
+    p.hidden = false; t.hidden = false;
+    bar.style.width = Math.max(0, Math.min(100, pct)) + '%';
+    t.textContent = text || (Math.round(pct) + '%');
+  }
+
+  function parseUrl(text){
+    var lines = (text || '').trim().split('\\n');
+    var last = lines[lines.length - 1] || '';
+    return /^https?:\\/\\//.test(last) ? last : '';
+  }
+
+  function errMsg(status){
+    if(status === 401) return 'Key 错误或缺失';
+    if(status === 429) return '上传太频繁，稍等几秒再试';
+    if(status === 413) return '文件超出大小限制';
+    if(status === 400) return '请求格式不对';
+    return '上传失败（HTTP ' + status + '）';
+  }
+
+  // ---- 文件选择 ----
+  var fi = $('fileInput'), drop = $('drop');
+  if(fi){
+    fi.addEventListener('change', function(){
+      curFile = fi.files && fi.files[0] ? fi.files[0] : null;
+      if(curFile){
+        $('fileInfo').hidden = false;
+        $('fileName').textContent = curFile.name;
+        $('fileSize').textContent = fmt(curFile.size);
+      } else {
+        $('fileInfo').hidden = true;
+      }
+    });
+  }
+  if(drop){
+    ['dragenter','dragover'].forEach(function(ev){
+      drop.addEventListener(ev, function(e){ e.preventDefault(); drop.classList.add('over'); });
+    });
+    ['dragleave','dragend'].forEach(function(ev){
+      drop.addEventListener(ev, function(){ drop.classList.remove('over'); });
+    });
+    drop.addEventListener('drop', function(e){
+      e.preventDefault(); drop.classList.remove('over');
+      if(e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0]){
+        try { fi.files = e.dataTransfer.files; } catch(err) {}
+        curFile = e.dataTransfer.files[0];
+        $('fileInfo').hidden = false;
+        $('fileName').textContent = curFile.name;
+        $('fileSize').textContent = fmt(curFile.size);
+      }
+    });
+  }
+
+  // ---- 上传文件 ----
+  var form = $('upForm');
+  if(form){
+    form.addEventListener('submit', function(e){
+      if(!window.FormData || !window.XMLHttpRequest) return; // 交给浏览器原生提交
+      e.preventDefault();
+      var f = curFile || (fi.files && fi.files[0]);
+      if(!f){ toast(false, '请先选择文件', ''); return; }
+      if(f.size > ${c.MAX_MB} * 1024 * 1024){ toast(false, '文件超过 ${c.MAX_MB}MB', ''); return; }
+      if(NEED_KEY && !($('keyInput') && $('keyInput').value.trim())){ toast(false, '请填写 Key', ''); return; }
+
+      var fd = new FormData();
+      fd.append('file', f);
+      if($('keyInput')) fd.append('key', $('keyInput').value.trim());
+      if($('shortFile') && $('shortFile').checked) fd.append('short', '1');
+
+      var btn = $('btnUpload');
+      btn.disabled = true; btn.textContent = '上传中…';
+      setProg(0, '准备上传…');
+
+      var xhr = new XMLHttpRequest();
+      xhr.open('POST', BASE + '/ud' + ($('shortFile') && $('shortFile').checked ? '?short=1' : ''));
+      xhr.upload.onprogress = function(ev){
+        if(ev.lengthComputable){
+          var pct = ev.loaded / ev.total * 100;
+          setProg(pct, fmt(ev.loaded) + ' / ' + fmt(ev.total));
+        }
+      };
+      xhr.onload = function(){
+        btn.disabled = false; btn.textContent = '开始上传';
+        setProg(null);
+        var url = parseUrl(xhr.responseText);
+        if(xhr.status >= 200 && xhr.status < 300 && url){ toast(true, '上传成功', url); }
+        else { toast(false, errMsg(xhr.status), ''); }
+      };
+      xhr.onerror = function(){
+        btn.disabled = false; btn.textContent = '开始上传';
+        setProg(null);
+        toast(false, '网络错误，请重试', '');
+      };
+      xhr.send(fd);
+    });
+  }
+
+  // ---- 发送文本 ----
+  var btnText = $('btnText');
+  if(btnText){
+    btnText.addEventListener('click', function(){
+      var txt = ($('rawText').value || '').trim();
+      if(!txt){ toast(false, '请输入文本内容', ''); return; }
+      if(NEED_KEY && !($('rawKey') && $('rawKey').value.trim())){ toast(false, '请填写 Key', ''); return; }
+      var headers = { 'Content-Type': 'text/plain; charset=utf-8' };
+      if($('rawKey') && $('rawKey').value.trim()) headers['X-API-Key'] = $('rawKey').value.trim();
+      btnText.disabled = true; btnText.textContent = '发送中…';
+      fetch(BASE + '/ud' + ($('shortText') && $('shortText').checked ? '?short=1' : ''), {
+        method: 'POST', headers: headers, body: txt
+      }).then(function(r){
+        return r.text().then(function(t){ return { s: r.status, t: t }; });
+      }).then(function(res){
+        btnText.disabled = false; btnText.textContent = '发送文本';
+        var url = parseUrl(res.t);
+        if(res.s >= 200 && res.s < 300 && url){ toast(true, '发送成功', url); }
+        else { toast(false, errMsg(res.s), ''); }
+      }).catch(function(){
+        btnText.disabled = false; btnText.textContent = '发送文本';
+        toast(false, '网络错误，请重试', '');
+      });
+    });
+  }
 })();
-</script>
-</body></html>`;
+</script>`;
+
+  return pageShell("UD Relay · 一次性文件中转", body);
 }
 
 function helpPageHtml(origin: string, env: Env, text: string): string {
   const bp = basePath(env);
   const base = origin + (bp || "");
-  return `<!doctype html>
-<html lang="zh-CN"><head>
-<meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>UD Relay 帮助</title>
-<style>
-:root{--bg:#0c1224;--card:rgba(14,19,33,.85);--stroke:rgba(255,255,255,.08);--muted:#b9c7e3;--accent:#6de9c5;--accent2:#7db2ff}
-*{box-sizing:border-box}
-body{margin:0;min-height:100vh;font-family:"Space Grotesk","IBM Plex Sans","PingFang SC","Microsoft YaHei",system-ui,sans-serif;background:
-radial-gradient(circle at 10% 20%,rgba(93,173,255,.2),transparent 25%),
-radial-gradient(circle at 80% 0%,rgba(86,255,189,.18),transparent 25%),
-radial-gradient(circle at 50% 80%,rgba(133,99,255,.12),transparent 30%),
-linear-gradient(135deg,#0b1220 0%,#0f1a33 100%);color:#eaf0ff;}
-.wrap{max-width:940px;margin:0 auto;padding:40px 18px;}
-.card{background:var(--card);border:1px solid var(--stroke);border-radius:18px;padding:22px 20px;box-shadow:0 18px 50px rgba(0,0,0,.35);backdrop-filter:blur(8px);}
-.title{font-size:22px;font-weight:800;margin:0 0 6px;}
-.muted{color:var(--muted);font-size:13px;line-height:1.6;}
-a{color:var(--accent2);text-decoration:none;}
-a:hover{text-decoration:underline;}
-.code{background:rgba(0,0,0,.35);padding:14px;border-radius:12px;overflow:auto;border:1px solid var(--stroke);color:#d9e7ff;white-space:pre-wrap;}
-@media (max-width:640px){.wrap{padding:26px 14px;}}
-</style></head><body>
-<div class="wrap"><div class="card">
-<div class="title">UD Relay 帮助</div>
-<div class="muted" style="margin-bottom:12px;">上传入口：<a href="${base}/ud">${base}/ud</a></div>
-<pre class="code">${escapeHtml(text)}</pre>
-</div></div></body></html>`;
+  const body = `<div class="wrap">
+  <header class="top">
+    <div class="brand">
+      ${logoMark()}
+      <div>
+        <h1>使用说明</h1>
+        <p class="sub">UD Relay · 一次性文件中转</p>
+      </div>
+    </div>
+    <div class="badges"><span class="badge">上传入口</span></div>
+  </header>
+  <section class="card">
+    <pre class="code">${escapeHtml(text)}</pre>
+  </section>
+  <footer>
+    <a href="${base}/ud">返回上传页</a>
+    <a href="${base}/hc">健康检查</a>
+  </footer>
+</div>`;
+  return pageShell("UD Relay · 使用说明", body);
 }
 
 function hcHtml(origin: string, env: Env, stats: Record<string, number | string>): string {
@@ -592,47 +892,34 @@ function hcHtml(origin: string, env: Env, stats: Record<string, number | string>
     return `${v.toFixed(2)} ${units[idx]}`;
   };
 
-  return `<!doctype html>
-<html lang="zh-CN"><head>
-<meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>UD Relay 健康检查</title>
-<style>
-:root{--bg:#0c1224;--card:rgba(14,19,33,.85);--stroke:rgba(255,255,255,.08);--muted:#b9c7e3;--accent:#6de9c5;--accent2:#7db2ff}
-*{box-sizing:border-box}
-body{margin:0;min-height:100vh;font-family:"Space Grotesk","IBM Plex Sans","PingFang SC","Microsoft YaHei",system-ui,sans-serif;background:
-radial-gradient(circle at 10% 20%,rgba(93,173,255,.2),transparent 25%),
-radial-gradient(circle at 80% 0%,rgba(86,255,189,.18),transparent 25%),
-radial-gradient(circle at 50% 80%,rgba(133,99,255,.12),transparent 30%),
-linear-gradient(135deg,#0b1220 0%,#0f1a33 100%);color:#eaf0ff;}
-.wrap{max-width:940px;margin:0 auto;padding:40px 18px;}
-.card{background:var(--card);border:1px solid var(--stroke);border-radius:18px;padding:22px 20px;box-shadow:0 18px 50px rgba(0,0,0,.35);backdrop-filter:blur(8px);}
-.title{font-size:22px;font-weight:800;margin:0 0 6px;}
-.muted{color:var(--muted);font-size:13px;line-height:1.6;}
-.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px;margin-top:14px;}
-.tile{border:1px solid var(--stroke);border-radius:14px;padding:14px 12px;background:rgba(0,0,0,.2);}
-.tile h3{margin:0 0 6px;font-size:15px;}
-.value{font-size:20px;font-weight:800;}
-a{color:var(--accent2);text-decoration:none;}
-a:hover{text-decoration:underline;}
-.code{background:rgba(0,0,0,.35);padding:14px;border-radius:12px;overflow:auto;border:1px solid var(--stroke);color:#d9e7ff;white-space:pre-wrap;}
-@media (max-width:640px){.wrap{padding:26px 14px;}}
-</style></head><body>
-<div class="wrap"><div class="card">
-<div class="title">UD Relay 健康检查</div>
-<div class="muted">上传入口：<a href="${base}/ud">${base}/ud</a></div>
-<div class="muted">帮助文档：<a href="${base}/hp">${base}/hp</a></div>
-<div class="grid">
-  <div class="tile"><h3>调用次数</h3><div class="value">${fmtNum(stats.hc_calls)}</div><div class="muted">hc 自部署以来的累计调用</div></div>
-  <div class="tile"><h3>待下载文件</h3><div class="value">${fmtNum(stats.pending_tokens)}</div><div class="muted">尚未被消费的一次性链接数量</div></div>
-  <div class="tile"><h3>待下载体积</h3><div class="value">${fmtBytes(stats.pending_bytes)}</div><div class="muted">元数据中的 size 汇总</div></div>
-  <div class="tile"><h3>R2 对象数</h3><div class="value">${fmtNum(stats.r2_objects)}</div><div class="muted">obj/ 前缀下的对象数量</div></div>
-  <div class="tile"><h3>R2 存储量</h3><div class="value">${fmtBytes(stats.r2_bytes)}</div><div class="muted">obj/ 前缀下对象的总大小</div></div>
-</div>
-<div class="section" style="margin-top:16px;">
-  <div class="muted">原始 JSON：</div>
-  <pre class="code">${escapeHtml(JSON.stringify(stats, null, 2))}</pre>
-</div>
-</div></div></body></html>`;
+  const body = `<div class="wrap">
+  <header class="top">
+    <div class="brand">
+      ${logoMark()}
+      <div>
+        <h1>健康检查</h1>
+        <p class="sub">UD Relay · 运行状态</p>
+      </div>
+    </div>
+    <div class="badges"><span class="badge">ok</span></div>
+  </header>
+
+  <section class="card">
+    <div class="tiles">
+      <div class="tile"><h3>调用次数</h3><div class="val">${fmtNum(stats.hc_calls)}</div><div class="note">hc 自部署以来累计</div></div>
+      <div class="tile"><h3>待下载文件</h3><div class="val">${fmtNum(stats.pending_tokens)}</div><div class="note">尚未被消费的一次性链接</div></div>
+      <div class="tile"><h3>待下载体积</h3><div class="val">${fmtBytes(stats.pending_bytes)}</div><div class="note">元数据 size 汇总</div></div>
+      <div class="tile"><h3>R2 对象 / 存储</h3><div class="val">${fmtNum(stats.r2_objects)}</div><div class="note">${fmtBytes(stats.r2_bytes)}</div></div>
+    </div>
+    <pre class="code">${escapeHtml(JSON.stringify(stats, null, 2))}</pre>
+  </section>
+
+  <footer>
+    <a href="${base}/ud">上传页</a>
+    <a href="${base}/hp">使用说明</a>
+  </footer>
+</div>`;
+  return pageShell("UD Relay · 健康检查", body);
 }
 
 function escapeHtml(s: string): string {
