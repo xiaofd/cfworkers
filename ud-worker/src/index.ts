@@ -7,8 +7,8 @@ export interface Env {
   // secrets / vars:
   UD_API_KEY?: string;     // optional
   UD_BASE_PATH?: string;   // optional, e.g. "/relay"
-  UD_MAX_MB?: string;      // optional, default 50
-  UD_RATE_LIMIT_SEC?: string; // optional, default 10
+  UD_MAX_MB?: string;      // optional, default 100
+  UD_RATE_LIMIT_SEC?: string; // optional, default 2
   UD_MAX_PENDING?: string; // optional, default 10
   UD_TTL_SEC?: string;     // optional, default 86400
 }
@@ -336,58 +336,60 @@ function helpText(origin: string, env: Env): string {
   const c = cfg(env);
   const bp = basePath(env);
   const base = origin + (bp || "");
-  const curlKey = c.REQUIRE_KEY ? "YOUR_KEY" : "";
-  const keyParam = c.REQUIRE_KEY ? `&key=${curlKey}` : "";
-  const keyOnly = c.REQUIRE_KEY ? `?key=${curlKey}` : "";
-  const curlMultipart = c.REQUIRE_KEY
-    ? `curl -sS -F "file=@/path/to/file" "${base}/ud?key=${curlKey}"`
-    : `curl -sS -F "file=@/path/to/file" "${base}/ud"`;
-  const curlPut = `curl -sS -T "/path/to/file" "${base}/ud?name=yourfile.ext${keyParam}"   # 不指定 name 则保存为随机 8 位 .bin`;
-  const curlText = `curl -sS -d "hello" "${base}/ud${keyOnly}"   # 保存为 <timestamp>.txt`;
+  const keyParam = c.REQUIRE_KEY ? "&key=YOUR_KEY" : "";
+  const keyOnly = c.REQUIRE_KEY ? "?key=YOUR_KEY" : "";
 
-  return `UD Relay 说明（Workers + R2 + Durable Objects）
+  return `UD Relay 使用说明（Cloudflare Workers + R2 + Durable Objects）
 
 用途
-- 一次性文件传输：上传后生成下载链接，成功下载 1 次后即失效。
-- 对外仅暴露最少接口，其余路径均返回空 404；如部署在子路径，请使用 ${bp || "/"} 前缀。
+- 一次性文件中转：上传后生成下载链接，整份文件被完整下载一次后即失效。
+- 只开放 ${bp || "/"} 下的少量路径，其余一律空 404。
+
+快速上手
+1) 浏览器：打开 ${base}/ud ，选择文件或拖进去，点上传
+2) 命令行：curl -sS -F "file=@/path/to/file" "${base}/ud"
+3) 拿到链接后发给对方；完整下载一次后链接失效（中途断开不算）
 
 接口
-- GET  ${base}/hc                健康检查；返回调用次数、待下载数量/体积、R2 使用量
-- GET  ${base}/hp                帮助文档（本页）
-- GET  ${base}/ud                浏览器上传页；命令行访问时返回本说明
-- POST ${base}/ud                上传文件（multipart/form-data，字段名 file；可选字段 key）
-- PUT  ${base}/ud                直传文件（需提供文件名，见示例）
-- POST ${base}/ud                直传文本（非 multipart；保存为 <timestamp>.txt）
-- GET  ${base}/ud/f/<token>/<filename>   一次性下载，成功后该 token 失效并删除对象
-- GET  ${base}/s/<code>          短链接下载（三位数字，需上传时勾选"短链接"）
-- GET  ${base}/hc?full=1         健康检查；加 full=1 则重新遍历 R2 统计（默认读 60s 缓存）
+- GET  ${base}/ud                      浏览器上传页（命令行访问时返回本说明）
+- POST ${base}/ud                      multipart/form-data 上传文件，字段名 file
+- POST ${base}/ud                      text/plain 直传文本（保存为 <时间戳>.txt）
+- PUT  ${base}/ud                      裸流直传，文件名取自 name/filename 或 X-Filename
+- GET  ${base}/ud/f/<token>/<文件名>     下载（一次性）
+- GET  ${base}/s/<三位数字>              短链接下载（上传时加 short=1 生成）
+- GET  ${base}/hc                      健康检查（JSON）
+- GET  ${base}/hc?full=1               强制重新遍历 R2 统计用量
+- GET  ${base}/hp                      本说明
 
-上传示例
-  ${curlMultipart}
-  ${curlPut}
-  ${curlText}
+命令行示例
+  上传文件        curl -sS -F "file=@/path/to/file" "${base}/ud"
+  上传并生成短链  curl -sS -F "file=@/path/to/file" "${base}/ud?short=1"
+  裸流直传        curl -sS -T "/path/to/file" "${base}/ud?name=filename.ext"
+  直传文本        curl -sS -d "hello" "${base}/ud"
+  下载            curl -O -J "<下载链接>"
+  断点续传        curl -C - -O -J "<下载链接>"
+  健康检查        curl "${base}/hc"
 
 规则
-- 最大上传：${c.MAX_MB}MB
-- 速率限制：同一 IP 每 ${c.RATE_LIMIT_SEC}s 1 次（0 关闭）
-- 待下载上限：${c.MAX_PENDING} 份（0 关闭；超出会从最旧的 ready 起淘汰）
-- 链接 TTL：${c.TTL_SEC}s（0 关闭；超时会清理）
+- 单文件上限：${c.MAX_MB}MB
+- 速率限制：同一 IP 每 ${c.RATE_LIMIT_SEC} 秒 1 次（0 关闭）
+- 待下载上限：${c.MAX_PENDING} 份（0 关闭；超出从最旧的开始淘汰）
+- 链接有效期：${c.TTL_SEC} 秒（0 关闭）
 - 上传鉴权：${c.REQUIRE_KEY ? "需要 key（UD_API_KEY 已配置）" : "无需 key"}
-- 直传文件名：PUT 可用 name / filename、X-Filename 或 /ud/<filename>；缺省则随机 8 位 .bin
-- 同名覆盖：同一个文件名再次上传会覆盖并删除旧对象
-- 下载一次性：整份文件被完整传完（覆盖全部字节）后，token 立即失效并删除对象
-- 支持 Range：多线程/断点续传可用；只有"完整下载完成"才算消费，探测性请求不会失效
-- 短链接：上传时加 short=1（或页面勾选），生成 ${base}/s/<三位数字>；可枚举，勿用于敏感文件
-- 预览保护：HEAD、Range 探测、链接预览机器人（Telegram/Slack/Discord 等抓取器）、浏览器预取都不会消费链接
-- 短码防猜：同一 IP 每 ${SHORT_FAIL_WINDOW}s 猜错超过 ${SHORT_FAIL_LIMIT} 次返回 429
+- 直传文件名：PUT 可用 name / filename / X-Filename / /ud/<文件名>；缺省为随机 8 位 .bin
+- 同名覆盖：同一文件名再次上传会覆盖并删除旧对象
+- 一次性判定：整份文件完整传完（覆盖全部字节）才失效，中途断开可重新下载
+- 支持 Range：多线程下载 / 断点续传可用
+- 预览保护：HEAD、Range 探测、链接预览机器人、浏览器预取都不会消耗链接
+- 短链接：可枚举，勿用于敏感文件；同一 IP 每 ${SHORT_FAIL_WINDOW} 秒猜错超过 ${SHORT_FAIL_LIMIT} 次返回 429
 
 环境变量 / Secrets
 - UD_API_KEY        可选；设置后上传需提供 key
-- UD_BASE_PATH      可选；部署在子路径时设置（如 /relay）
-- UD_MAX_MB         可选；默认 50
-- UD_RATE_LIMIT_SEC 可选；默认 10
-- UD_MAX_PENDING    可选；默认 10
-- UD_TTL_SEC        可选；默认 86400
+- UD_BASE_PATH      可选；部署在子路径时设置（如 /re）
+- UD_MAX_MB         可选；默认 ${DEFAULTS.MAX_MB}
+- UD_RATE_LIMIT_SEC 可选；默认 ${DEFAULTS.RATE_LIMIT_SEC}
+- UD_MAX_PENDING    可选；默认 ${DEFAULTS.MAX_PENDING}
+- UD_TTL_SEC        可选；默认 ${DEFAULTS.TTL_SEC}
 `;
 }
 
@@ -534,6 +536,59 @@ footer a:hover{text-decoration:underline}
 pre.code{margin:14px 0 0;padding:14px;border-radius:12px;background:var(--bg2);border:1px solid var(--line);
   overflow:auto;font-size:12.5px;line-height:1.6;white-space:pre-wrap;word-break:break-word;
   font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+
+/* 步骤 */
+.steps{counter-reset:s;display:grid;gap:12px;margin-top:14px}
+.step{position:relative;padding-left:38px;font-size:13.5px;line-height:1.55}
+.step::before{counter-increment:s;content:counter(s);position:absolute;left:0;top:-2px;width:24px;height:24px;
+  border-radius:50%;display:grid;place-items:center;font-size:12px;font-weight:800;color:#fff;
+  background:linear-gradient(135deg,var(--accent),var(--accent2))}
+.step .t{font-weight:700;display:block;margin-bottom:2px}
+.step .d{color:var(--muted);font-size:12.5px}
+.step code,.kv code{background:var(--bg2);border:1px solid var(--line);padding:1px 6px;border-radius:6px;
+  font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;word-break:break-all}
+
+/* 表格 */
+.tablewrap{overflow-x:auto;-webkit-overflow-scrolling:touch;margin-top:14px;border-radius:12px;
+  border:1px solid var(--line);background:var(--bg2)}
+table.api{width:100%;border-collapse:collapse;font-size:13px;min-width:560px}
+table.api th,table.api td{padding:10px 12px;text-align:left;border-bottom:1px solid var(--line);vertical-align:top}
+table.api th{font-weight:700;font-size:12px;color:var(--muted);white-space:nowrap;letter-spacing:.3px}
+table.api tr:last-child td{border-bottom:0}
+table.api td.m{white-space:nowrap;font-weight:800;font-size:12px;color:var(--accent);
+  font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+table.api td.p{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12.5px;
+  word-break:break-all;color:var(--fg)}
+table.api td.n{color:var(--muted);font-size:12.5px}
+/* 窄屏：表格改为堆叠卡片，避免横向滚动 */
+@media(max-width:600px){
+  .tablewrap{border:0;background:transparent;overflow:visible}
+  table.api{min-width:0;display:block}
+  table.api thead{display:none}
+  table.api tbody{display:block}
+  table.api tr{display:block;border:1px solid var(--line);border-radius:12px;background:var(--bg2);
+    padding:10px 12px;margin-bottom:10px}
+  table.api td{display:block;border:0;padding:0}
+  table.api td.m{display:inline-block;margin-right:8px;vertical-align:top}
+  table.api td.p{display:inline;vertical-align:top}
+  table.api td.n{display:block;margin-top:6px}
+}
+
+/* 代码块 + 复制 */
+.codeblock{position:relative;margin-top:12px}
+.codeblock pre{margin:0;padding:12px 78px 12px 14px;border-radius:12px;background:var(--bg2);
+  border:1px solid var(--line);overflow-x:auto;font-size:12.5px;line-height:1.65;white-space:pre-wrap;
+  word-break:break-all;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--fg)}
+.codeblock .copybtn{position:absolute;top:8px;right:8px;padding:5px 10px;font-size:12px;border-radius:8px}
+.exlabel{font-size:12.5px;font-weight:700;color:var(--fg);margin:16px 0 -4px}
+.exlabel:first-of-type{margin-top:6px}
+
+/* 规则列表 */
+.kv{list-style:none;padding:0;margin:14px 0 0;display:grid;gap:9px}
+.kv li{display:flex;gap:12px;font-size:13.5px;line-height:1.55;align-items:baseline}
+.kv li .k{flex:0 0 auto;font-weight:700;min-width:104px}
+.kv li .v{color:var(--muted);min-width:0}
+@media(max-width:560px){.kv li{flex-direction:column;gap:1px}.kv li .k{min-width:0}}
 `;
 }
 
@@ -850,9 +905,47 @@ function udHtml(origin: string, env: Env, message = "", ok = true, link = ""): s
   return pageShell("UD Relay · 一次性文件中转", body);
 }
 
-function helpPageHtml(origin: string, env: Env, text: string): string {
+function codeBlock(cmd: string): string {
+  return `<div class="codeblock"><pre>${escapeHtml(cmd)}</pre><button type="button" class="copybtn" data-copy="${escapeHtml(cmd)}">复制</button></div>`;
+}
+
+// 只做"复制按钮"的轻量脚本，帮助页/健康页复用
+function copyScript(): string {
+  return `<script>
+(function(){
+  function done(b){var o=b.textContent;b.textContent='已复制 ✓';b.classList.add('done');setTimeout(function(){b.textContent=o;b.classList.remove('done')},1500)}
+  function fb(t,b){var ta=document.createElement('textarea');ta.value=t;ta.style.position='fixed';ta.style.opacity='0';document.body.appendChild(ta);ta.select();try{document.execCommand('copy');done(b)}catch(e){}document.body.removeChild(ta)}
+  document.addEventListener('click',function(e){
+    var b=e.target.closest?e.target.closest('.copybtn'):null;
+    if(!b)return;
+    var t=b.getAttribute('data-copy')||'';
+    if(navigator.clipboard&&window.isSecureContext){navigator.clipboard.writeText(t).then(function(){done(b)}).catch(function(){fb(t,b)})}
+    else{fb(t,b)}
+  });
+})();
+</script>`;
+}
+
+function helpPageHtml(origin: string, env: Env): string {
+  const c = cfg(env);
   const bp = basePath(env);
   const base = origin + (bp || "");
+  const keyNote = c.REQUIRE_KEY ? "（本实例需要 Key，示例里用 YOUR_KEY 占位）" : "";
+
+  const p = (s: string) => `${bp || ""}${s}`;
+  const apiRows = [
+    ["GET", p("/ud"), "浏览器上传页；命令行访问返回纯文本说明"],
+    ["POST", p("/ud"), "multipart/form-data 上传，字段名 <code>file</code>"],
+    ["POST", p("/ud"), "text/plain 直传文本，保存为 &lt;时间戳&gt;.txt"],
+    ["PUT", p("/ud"), "裸流直传，文件名取自 <code>name</code> / <code>X-Filename</code>"],
+    ["GET", p("/ud/f/&lt;token&gt;/&lt;文件名&gt;"), "下载（一次性）"],
+    ["GET", p("/s/&lt;三位数字&gt;"), "短链接下载（上传时加 <code>short=1</code>）"],
+    ["GET", p("/hc"), "健康检查 JSON；<code>?full=1</code> 强制重算 R2 用量"],
+    ["GET", p("/hp"), "本页"],
+  ]
+    .map(([m, path, n]) => `<tr><td class="m">${m}</td><td class="p">${path}</td><td class="n">${n}</td></tr>`)
+    .join("");
+
   const body = `<div class="wrap">
   <header class="top">
     <div class="brand">
@@ -862,16 +955,95 @@ function helpPageHtml(origin: string, env: Env, text: string): string {
         <p class="sub">UD Relay · 一次性文件中转</p>
       </div>
     </div>
-    <div class="badges"><span class="badge">上传入口</span></div>
+    <div class="badges">
+      <span class="badge ${c.REQUIRE_KEY ? "warn" : ""}">${c.REQUIRE_KEY ? "需要 Key" : "无需 Key"}</span>
+      <span class="badge">最大 ${c.MAX_MB}MB</span>
+      <span class="badge">TTL ${Math.round(c.TTL_SEC / 3600)}h</span>
+    </div>
   </header>
+
   <section class="card">
-    <pre class="code">${escapeHtml(text)}</pre>
+    <h2><span class="dot"></span>三步上手</h2>
+    <div class="steps">
+      <div class="step"><span class="t">打开上传页，选文件</span>
+        <span class="d">点击虚线框或把文件拖进去，也可以直接发送一段文本。</span></div>
+      <div class="step"><span class="t">拿到一次性链接</span>
+        <span class="d">默认是长链接；勾选「生成短链接」则得到 <code>/s/123</code> 这种三位数字短码。</span></div>
+      <div class="step"><span class="t">发出去，下载一次即失效</span>
+        <span class="d">对方完整下载一次后链接自动作废；预览卡片、断点续传、多线程下载都不会误伤。</span></div>
+    </div>
   </section>
+
+  <section class="card">
+    <h2><span class="dot"></span>接口一览</h2>
+    <p class="desc">基地址 <code style="word-break:break-all">${base}</code>，除下列路径外其余一律返回空 404</p>
+    <div class="tablewrap">
+      <table class="api">
+        <thead><tr><th>方法</th><th>路径</th><th>说明</th></tr></thead>
+        <tbody>${apiRows}</tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2><span class="dot"></span>命令行示例</h2>
+    <p class="desc">点右上角「复制」直接拿走 ${keyNote}</p>
+    <div class="exlabel">上传文件</div>
+    ${codeBlock(`curl -sS -F "file=@/path/to/file" "${base}/ud"`)}
+    <div class="exlabel">上传并生成短链接</div>
+    ${codeBlock(`curl -sS -F "file=@/path/to/file" "${base}/ud?short=1"`)}
+    <div class="exlabel">裸流直传（保留原文件名）</div>
+    ${codeBlock(`curl -sS -T "/path/to/file" "${base}/ud?name=filename.ext"`)}
+    <div class="exlabel">直接发送文本</div>
+    ${codeBlock(`curl -sS -d "hello" "${base}/ud"`)}
+    <div class="exlabel">下载（自动用服务端文件名）</div>
+    ${codeBlock(`curl -O -J "<下载链接>"`)}
+    <div class="exlabel">断点续传</div>
+    ${codeBlock(`curl -C - -O -J "<下载链接>"`)}
+    <div class="exlabel">健康检查</div>
+    ${codeBlock(`curl -sS "${base}/hc"`)}
+  </section>
+
+  <section class="card">
+    <h2><span class="dot"></span>规则与限制</h2>
+    <ul class="kv">
+      <li><span class="k">单文件上限</span><span class="v">${c.MAX_MB} MB</span></li>
+      <li><span class="k">上传频率</span><span class="v">同一 IP 每 ${c.RATE_LIMIT_SEC} 秒 1 次${c.RATE_LIMIT_SEC === 0 ? "（已关闭）" : ""}</span></li>
+      <li><span class="k">待下载上限</span><span class="v">${c.MAX_PENDING} 份${c.MAX_PENDING === 0 ? "（已关闭）" : "，超出从最旧的开始淘汰"}</span></li>
+      <li><span class="k">链接有效期</span><span class="v">${c.TTL_SEC} 秒${c.TTL_SEC === 0 ? "（永不过期）" : "（约 " + Math.round(c.TTL_SEC / 3600) + " 小时）"}</span></li>
+      <li><span class="k">上传鉴权</span><span class="v">${c.REQUIRE_KEY ? "需要 Key（UD_API_KEY 已配置）" : "无需 Key"}</span></li>
+      <li><span class="k">一次性判定</span><span class="v">整份文件完整传完才失效；中途断开可以重新下载</span></li>
+      <li><span class="k">多线程 / 续传</span><span class="v">支持 Range，多段拼接覆盖完整才算下载成功</span></li>
+      <li><span class="k">预览保护</span><span class="v">HEAD、Range 探测、链接预览机器人、浏览器预取都不会消耗链接</span></li>
+      <li><span class="k">同名覆盖</span><span class="v">同一文件名再次上传会覆盖并删除旧对象</span></li>
+      <li><span class="k">短链接风险</span><span class="v">三位数字可枚举，勿用于敏感文件；同一 IP 每 ${SHORT_FAIL_WINDOW} 秒猜错超过 ${SHORT_FAIL_LIMIT} 次返回 429</span></li>
+    </ul>
+  </section>
+
+  <section class="card">
+    <h2><span class="dot"></span>环境变量</h2>
+    <div class="tablewrap">
+      <table class="api">
+        <thead><tr><th>变量</th><th>默认</th><th>说明</th></tr></thead>
+        <tbody>
+          <tr><td class="p">UD_API_KEY</td><td class="n">未设置</td><td class="n">设置后上传需提供 key（secret）</td></tr>
+          <tr><td class="p">UD_BASE_PATH</td><td class="n">空</td><td class="n">子路径前缀，如 <code>/re</code></td></tr>
+          <tr><td class="p">UD_MAX_MB</td><td class="n">${DEFAULTS.MAX_MB}</td><td class="n">单文件大小上限（MB）</td></tr>
+          <tr><td class="p">UD_RATE_LIMIT_SEC</td><td class="n">${DEFAULTS.RATE_LIMIT_SEC}</td><td class="n">同 IP 上传间隔（秒），0 关闭</td></tr>
+          <tr><td class="p">UD_MAX_PENDING</td><td class="n">${DEFAULTS.MAX_PENDING}</td><td class="n">待下载文件数上限，0 关闭</td></tr>
+          <tr><td class="p">UD_TTL_SEC</td><td class="n">${DEFAULTS.TTL_SEC}</td><td class="n">链接有效期（秒），0 关闭</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
   <footer>
     <a href="${base}/ud">返回上传页</a>
     <a href="${base}/hc">健康检查</a>
+    <span style="margin-left:auto">下载即失效 · 预览/预取不会消耗</span>
   </footer>
-</div>`;
+</div>
+${copyScript()}`;
   return pageShell("UD Relay · 使用说明", body);
 }
 
@@ -999,7 +1171,7 @@ export default {
       if (!isBrowser(request)) {
         return new Response(text, { status: 200, headers: { "Content-Type": "text/plain; charset=utf-8" } });
       }
-      return new Response(helpPageHtml(url.origin, env, text), { status: 200, headers: { "Content-Type": "text/html; charset=utf-8" } });
+      return new Response(helpPageHtml(url.origin, env), { status: 200, headers: { "Content-Type": "text/html; charset=utf-8" } });
     }
 
     // /ud GET -> page/help
